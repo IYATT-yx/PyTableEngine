@@ -1,3 +1,9 @@
 dist/
 logs/
 venv/
+__pycache__/
+*.log
+nuitka-crash-report.xml
+config.ini
+extensions/*
+!extensions/IYATT_DemoPlugin/

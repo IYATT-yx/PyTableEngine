@@ -28,7 +28,7 @@ class Config:
     def generateDefaultConfig(self):
         '''自动生成默认 config.ini'''
         self.config['pip'] = {
-            'indexUrl': '',
+            'indexUrl': 'https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple',
             'proxy': ''
         }
         self.config['disabled_plugins'] = {}
@@ -48,12 +48,12 @@ class Config:
 
     def applyGlobalProxy(self):
         '''将 config.ini 中的代理设置全局注入当前进程环境变量'''
-        proxy_url = self.getCleanOption('pip', 'proxy')
-        if proxy_url:
-            os.environ['HTTP_PROXY'] = proxy_url
-            os.environ['HTTPS_PROXY'] = proxy_url
-            os.environ['http_proxy'] = proxy_url
-            os.environ['https_proxy'] = proxy_url
+        proxyUrl = self.getCleanOption('pip', 'proxy')
+        if proxyUrl:
+            os.environ['HTTP_PROXY'] = proxyUrl
+            os.environ['HTTPS_PROXY'] = proxyUrl
+            os.environ['http_proxy'] = proxyUrl
+            os.environ['https_proxy'] = proxyUrl
         else:
             # 若未配置或为空，清理可能继承自系统的代理环境变量，防止干扰
             for env_key in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:

@@ -1,0 +1,24 @@
+{
+  // 告诉 Pylance 语言服务器额外的模块搜索路径（支持绝对路径与基于项目根目录的相对路径）
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/vendor",
+  ],
+
+  // 告诉标准 Python 调试器和环境识别额外的补全路径
+  "python.autoComplete.extraPaths": [
+    "${workspaceFolder}/vendor",
+  ],
+
+  // （可选）启用 Pylance 的基本类型检查
+  "python.analysis.typeCheckingMode": "basic",
+  
+  // （可选）自动索引第三方库以提高代码补全速度和准确度
+  "python.analysis.indexing": true,
+
+  // （可选）配置文件/目录排除项，防止检索速度过慢
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/node_modules/*/**": true
+  }
+}

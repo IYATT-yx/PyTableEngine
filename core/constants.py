@@ -13,3 +13,4 @@ class Path:
     appDir = os.path.dirname(os.path.abspath(sys.argv[0]))
     config = os.path.join(appDir, 'config.ini')
     log = os.path.join(appDir, 'logs', 'PyTableEngine.log')
+    vendor = os.path.join(appDir, 'vendor')

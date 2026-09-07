@@ -2,41 +2,50 @@
 file: application.py
 description: 主界面
 author: IYATT-yx
-copyright:  Copyright (c) 2026 IYATT-yx.
-            Licensed under the MIT License. See LICENSE file in the project root for full license information.
+copyright:   Copyright (c) 2026 IYATT-yx.
+             Licensed under the MIT License. See LICENSE file in the project root for full license information.
 '''
 import configparser
 import importlib.util
 import multiprocessing
 import os
+import sys
+import threading
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
+import inspect
 
 import pythoncom
 import win32com.client
 
 from buildtime import buildTime
-from core.dependency import DependencyManager
+from core import constants
+from core.config import Config
+from core.dependency import Dependency
 from core.logger import AppLogger
 from core.runner import pluginRunnerTask
-from core import constants
 
 
 class MainWindow:
     '''Tkinter 主界面管理类'''
 
-    def __init__(self, root):
+    def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title(f'PyTabEngine 思能快表引擎 by IYATT-yx {buildTime}')
+        self.root.title(
+            f'PyTableEngine 思能快表引擎 by IYATT-yx {buildTime}'
+        )
         self.root.geometry('880x580')
         iconPath = os.path.join(constants.Path.appDir, 'icon.ico')
-        if os.path.exists(iconPath):
-            self.root.iconbitmap(iconPath)
+        self.root.iconbitmap(iconPath)
+
+        self.setupVendorPath()
 
         self.logger = AppLogger.setupLogger()
-        self.configPath = os.path.join(constants.Path.appDir, 'config.ini')
-        self.depManager = DependencyManager(self.configPath)
+
+        # 配置与依赖管理器初始化
+        self.config = Config()
+        self.depManager = Dependency(self.config)
 
         self.comProgIdMap = {
             'Excel (Microsoft Office)': 'Excel.Application',
@@ -47,13 +56,155 @@ class MainWindow:
         self.loadedPlugins = []
         self.activeProcess = None
         self.logQueue = multiprocessing.Queue()
+        self.configPath = constants.Path.config
 
+        # 初始化 UI 组件
         self.initUiComponents()
-        self.scanPlugins()
+
+        # 启动日志监听
         self.listenLogQueue()
 
+        # 延迟 100ms 触发依赖检查与插件扫描（确保界面先渲染出来）
+        self.root.after(100, self.processDependenciesAndScan)
+
+    def setupVendorPath(self):
+        '''给主进程挂载 vendor 目录及 Windows DLL 路径'''
+        vendorDir = constants.Path.vendor
+        if os.path.exists(vendorDir):
+            if vendorDir not in sys.path:
+                sys.path.insert(0, vendorDir)
+
+            # 挂载 DLL 路径（针对 NumPy/SciPy 等 C 扩展）
+            if hasattr(os, 'add_dll_directory'):
+                try:
+                    os.add_dll_directory(vendorDir)
+                except Exception:
+                    pass
+
+            for item in os.listdir(vendorDir):
+                if item.endswith('.libs'):
+                    libsDir = os.path.join(vendorDir, item)
+                    if os.path.isdir(libsDir):
+                        if hasattr(os, 'add_dll_directory'):
+                            try:
+                                os.add_dll_directory(libsDir)
+                            except Exception:
+                                pass
+                        if libsDir not in os.environ.get('PATH', ''):
+                            os.environ['PATH'] = libsDir + os.path.pathsep + os.environ.get('PATH', '')
+
+            binDir = os.path.join(vendorDir, 'bin')
+            if os.path.exists(binDir) and os.path.isdir(binDir):
+                if hasattr(os, 'add_dll_directory'):
+                    try:
+                        os.add_dll_directory(binDir)
+                    except Exception:
+                        pass
+                if binDir not in os.environ.get('PATH', ''):
+                    os.environ['PATH'] = binDir + os.path.pathsep + os.environ.get('PATH', '')
+
+    def setUiInteractive(self, enabled: bool):
+        '''
+        控制界面关键控件的可交互状态，防止依赖未安装完成时用户误操作导致报错
+        '''
+        targetState = 'normal' if enabled else 'disabled'
+        comboState = 'readonly' if enabled else 'disabled'
+
+        # 禁用/启用顶部连接与切换按钮
+        if hasattr(self, 'comCombo'):
+            self.comCombo.config(state=comboState)
+        if hasattr(self, 'connectBtn'):
+            self.connectBtn.config(state=targetState)
+
+        # 禁用/启用搜索与操作按钮
+        if hasattr(self, 'toggleBtn'):
+            self.toggleBtn.config(state=targetState)
+        if hasattr(self, 'refreshBtn'):
+            self.refreshBtn.config(state=targetState)
+        if hasattr(self, 'searchEntry'):
+            self.searchEntry.config(state=targetState)
+
+        # 禁用/启用插件列表交互（通过 Treeview 选择模式控制）
+        if hasattr(self, 'pluginTree'):
+            self.pluginTree.config(selectmode='browse' if enabled else 'none')
+
+    def processDependenciesAndScan(self):
+        self.setUiInteractive(False)
+        self.appendLog('正在准备检查插件依赖项...', level='INFO')
+
+        extensionsDir = os.path.join(constants.Path.appDir, 'extensions')
+
+        def workerTask():
+            def logCallback(msg: str, level: str='INFO'):
+                # 使用 inspect 获取当前的栈帧对象
+                frame = inspect.currentframe()
+                try:
+                    callerFrame = frame.f_back if frame else None
+                    callerFrame = callerFrame.f_back if callerFrame else None
+                    if callerFrame:
+                        file_name = os.path.basename(callerFrame.f_code.co_filename)
+                        func_name = callerFrame.f_code.co_name
+                        line_no = callerFrame.f_lineno
+                    else:
+                        file_name = func_name = line_no = None
+                finally:
+                    # 显式释放 frame 引用，防止在异常或复杂调用栈中产生循环引用导致内存泄漏
+                    del frame
+
+                # 将抓取到的具体源码位置作为闭包默认参数绑定，推入主线程事件队列
+                self.root.after(
+                    0, 
+                    lambda f=file_name, fn=func_name, l=line_no: self.appendLog(
+                        msg, 
+                        level=level, 
+                        plugId='Dependency', 
+                        filename=f, 
+                        funcName=fn, 
+                        lineno=l
+                    )
+                )
+
+            isSuccess = False
+            errorMsg = None
+
+            try:
+                logCallback('开始检查插件依赖项...', level='INFO')
+                isSuccess = self.depManager.collectAndInstallPluginDependencies(
+                    extensionsDir, logCallback
+                )
+            except Exception as err:
+                errorMsg = str(err)
+
+            self.root.after(0, lambda: self.onDependenciesFinished(isSuccess, errorMsg))
+
+        depThread = threading.Thread(target=workerTask, daemon=True)
+        depThread.start()
+
+    def onDependenciesFinished(self, isSuccess: bool, errorMsg: str|None = None):
+        '''依赖项处理完毕后的回调函数（运行在主线程）'''
+        if errorMsg:
+            messagebox.showerror('依赖错误', f'处理插件依赖时发生异常: {errorMsg}')
+        elif not isSuccess:
+            messagebox.showwarning(
+                '依赖警告',
+                '部分依赖项安装失败，相关插件可能无法正常运行！',
+            )
+
+        # 刷新 Python 导入系统的路径与规范缓存
+        importlib.invalidate_caches()
+
+        # 重新挂载 vendor 路径，确保新生成的 .libs 或 C 扩展动态链接库被识别
+        self.setupVendorPath()
+
+        # 依赖全部就绪后，开始安全地扫描插件
+        self.scanPlugins()
+
+        # 解锁界面交互，恢复用户操作
+        self.setUiInteractive(True)
+        self.appendLog('系统初始化就绪，插件环境加载完毕。', level='SUCCESS')
+
     def initUiComponents(self):
-        # 1. 顶部 COM 接口选择栏
+        # 顶部 COM 接口选择栏
         topFrame = ttk.LabelFrame(self.root, text=' COM 接口连接 ', padding=10)
         topFrame.pack(fill=tk.X, padx=10, pady=5)
 
@@ -79,7 +230,7 @@ class MainWindow:
         )
         self.comStatusLabel.pack(side=tk.LEFT, padx=10)
 
-        # 2. 中间搜索过滤与插件表格
+        # 中间搜索过滤与插件表格
         midFrame = ttk.LabelFrame(self.root, text=' 插件列表 ', padding=10)
         midFrame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
@@ -89,20 +240,20 @@ class MainWindow:
         ttk.Label(searchFrame, text='搜索插件:').pack(side=tk.LEFT, padx=5)
         self.searchVar = tk.StringVar()
         self.searchVar.trace_add('write', self.filterPlugins)
-        searchEntry = ttk.Entry(
+        self.searchEntry = ttk.Entry(
             searchFrame, textvariable=self.searchVar, width=25
         )
-        searchEntry.pack(side=tk.LEFT, padx=5)
+        self.searchEntry.pack(side=tk.LEFT, padx=5)
 
-        toggleBtn = ttk.Button(
+        self.toggleBtn = ttk.Button(
             searchFrame, text='切换启用/禁用', command=self.togglePluginState
         )
-        toggleBtn.pack(side=tk.RIGHT, padx=5)
+        self.toggleBtn.pack(side=tk.RIGHT, padx=5)
 
-        refreshBtn = ttk.Button(
+        self.refreshBtn = ttk.Button(
             searchFrame, text='刷新列表', command=self.scanPlugins
         )
-        refreshBtn.pack(side=tk.RIGHT, padx=5)
+        self.refreshBtn.pack(side=tk.RIGHT, padx=5)
 
         columns = ('name', 'author', 'status', 'description', 'version', 'entryType')
         self.pluginTree = ttk.Treeview(
@@ -266,6 +417,7 @@ class MainWindow:
                     spec = importlib.util.spec_from_file_location(
                         f'info_{folder}', pyFile
                     )
+                    assert spec is not None and spec.loader is not None, f'无法为插件 [{folder}] 创建模块规范或加载器'
                     mod = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(mod)
 
@@ -424,15 +576,9 @@ class MainWindow:
             level='INFO'
         )
 
-        try:
-            self.depManager.checkAndInstallDependencies(pluginDir, self.appendLog)
-        except Exception as err:
-            messagebox.showerror('依赖错误', str(err))
-            return
-
         self.activeProcess = multiprocessing.Process(
             target=pluginRunnerTask,
-            args=(pluginDir, folderName, progId, self.logQueue, 'config.ini'),
+            args=(pluginDir, folderName, progId, self.logQueue),
             daemon=True,
         )
         self.activeProcess.start()
@@ -461,34 +607,34 @@ class MainWindow:
 
         self.root.after(200, self.listenLogQueue)
 
-    def appendLog(self, message, level='INFO', plugId='System', filename=None, funcName=None, lineno=None, stacklevel=2):
+    def appendLog(self, message: str, level: str='INFO', plugId: str='System', filename:str|None=None, funcName:str|None=None, lineno:int|None=None, stacklevel:int=2):
         '''统一日志接口：兼容主进程与子进程日志'''
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        formatted_ui_msg = f'[{timestamp}] [{level}] [{plugId}] {message}\n'
+        formattedUiMsg = f'[{timestamp}] [{level}] [{plugId}] {message}\n'
         
-        # 1. 输出至 UI 日志组件
+        # 输出至 UI 日志组件
         self.logText.config(state=tk.NORMAL)
         tag = level if level in ['INFO', 'WARNING', 'ERROR', 'SUCCESS'] else 'INFO'
-        self.logText.insert(tk.END, formatted_ui_msg, tag)
+        self.logText.insert(tk.END, formattedUiMsg, tag)
         self.logText.see(tk.END)
         self.logText.config(state=tk.DISABLED)
 
-        # 2. 构造 extra（包含 plugId，如果存在源码位置也一并传入供 makeRecord 拦截）
-        extra_info = {'plugId': plugId}
-        call_stacklevel = stacklevel
+        # 构造 extra（包含 plugId，如果存在源码位置也一并传入供 makeRecord 拦截）
+        extraInfo: dict[str, str|int] = {'plugId': plugId}
+        callStacklevel = stacklevel
         
         if filename and funcName and lineno:
-            extra_info.update({
+            extraInfo.update({
                 'filename': filename,
                 'funcName': funcName,
                 'lineno': lineno
             })
-            call_stacklevel = 1 
+            callStacklevel = 1 
 
-        # 3. 写入日志文件
+        # 写入日志文件
         if level == 'ERROR':
-            self.logger.error(message, extra=extra_info, stacklevel=call_stacklevel)
+            self.logger.error(message, extra=extraInfo, stacklevel=callStacklevel)
         elif level == 'WARNING':
-            self.logger.warning(message, extra=extra_info, stacklevel=call_stacklevel)
+            self.logger.warning(message, extra=extraInfo, stacklevel=callStacklevel)
         else:
-            self.logger.info(message, extra=extra_info, stacklevel=call_stacklevel)
+            self.logger.info(message, extra=extraInfo, stacklevel=callStacklevel)

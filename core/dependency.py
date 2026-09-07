@@ -1,91 +1,210 @@
 '''
 file: dependency.py
-description: 依赖检查与安装管理
+description: 插件依赖项集中管理
 author: IYATT-yx
-copyright:  Copyright (c) 2026 IYATT-yx.
-            Licensed under the MIT License. See LICENSE file in the project root for full license information.
+copyright: Copyright (c) 2026 IYATT-yx.
+           Licensed under the MIT License. See LICENSE file in the project root for full license information.
 '''
-import configparser
 import os
 import subprocess
 import sys
+from importlib.metadata import Distribution
+from pathlib import Path
+from packaging.requirements import Requirement
+from typing import Callable
 
+from core.config import Config
 
-class DependencyManager:
-    '''插件依赖检查与安装管理'''
+class Dependency:
+    '''插件依赖项集中管理器'''
 
-    def __init__(self, configPath):
-        self.configPath = configPath
-        self.config = configparser.ConfigParser()
-        if os.path.exists(self.configPath):
-            self.config.read(self.configPath, encoding='utf-8')
+    def __init__(self, config: Config):
+        self.config = config
 
-    def getPipOption(self, key):
-        if self.config.has_section('pip') and key in self.config['pip']:
-            val = self.config['pip'][key].strip()
-            return val if val else None
-        return None
+    def getInstalledVendorPackages(self, vendorDir: str) -> dict[str, str]:
+        '''
+        扫描 vendor 目录下的 .dist-info，获取已安装包的名称与版本映射表
+        返回格式: {'numpy': '2.5.2', 'requests': '2.31.0'}
 
-    def checkAndInstallDependencies(self, pluginDir, logger_func):
-        reqPath = os.path.join(pluginDir, 'requirements.txt')
-        if not os.path.exists(reqPath):
-            return
+        Args:
+            vendorDir (str): vendor 目录路径
+        '''
+        installed: dict[str, str] = {}
+        vendorPath = Path(vendorDir)
+        if not vendorPath.exists():
+            return installed
 
-        vendorDir = os.path.join(pluginDir, 'vendor')
-        os.makedirs(vendorDir, exist_ok=True)
+        # 发现 vendorPath 目录下所有的 Distribution 元数据
+        distributions = Distribution.discover(path=[str(vendorPath)])
+        for dist in distributions:
+            # 统一转为小写便于规范化匹配 (如 NumPy -> numpy)
+            pkgName = dist.metadata['Name'].lower()
+            pkgVersion = dist.version
+            installed[pkgName] = pkgVersion
 
-        with open(reqPath, 'r', encoding='utf-8') as f:
-            lines = [
-                line.strip()
-                for line in f
-                if line.strip() and not line.startswith('#')
+        return installed
+
+    def collectAndInstallPluginDependencies(self, extensionsDir: str, logCallback: Callable[[str, str], None]) -> bool:
+        '''
+        扫描所有插件的 requirements.txt，进行预检；仅在缺失或版本不匹配时增量安装
+        '''
+        def log(msg: str, level: str='INFO'):
+            logCallback(msg, level)
+
+        vendorDir = os.path.abspath(
+            os.path.join(extensionsDir, '..', 'vendor')
+        )
+        if not os.path.exists(vendorDir):
+            os.makedirs(vendorDir, exist_ok=True)
+
+        # 收集所有插件的 requirements 声明
+        allRequirements: set[str] = set()
+        if os.path.exists(extensionsDir):
+            for folder in os.listdir(extensionsDir):
+                pluginDir = os.path.join(extensionsDir, folder)
+                reqFile = os.path.join(pluginDir, 'requirements.txt')
+                if os.path.isdir(pluginDir) and os.path.exists(reqFile):
+                    with open(reqFile, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#'):
+                                allRequirements.add(line)
+
+        if not allRequirements:
+            log('未检测到任何插件依赖声明，跳过依赖安装。', level='INFO')
+            return True
+
+        log(
+            f'检测到总计 {len(allRequirements)} 条依赖声明，正在预检 vendor 目录...',
+            level='INFO',
+        )
+
+        # 读取 vendor 目录当前已安装的包
+        installedVendorPkgs = self.getInstalledVendorPackages(vendorDir)
+
+        # 筛选出真正需要安装/更新的依赖项
+        missingOrOutdatedReqs: list[str] = []
+        for reqStr in allRequirements:
+            try:
+                req = Requirement(reqStr)
+                reqName = req.name.lower()
+
+                if reqName not in installedVendorPkgs:
+                    log(f'依赖缺失: [{reqStr}]，加入安装列表', level='INFO')
+                    missingOrOutdatedReqs.append(reqStr)
+                else:
+                    currentVer = installedVendorPkgs[reqName]
+                    if req.specifier and not req.specifier.contains(currentVer):
+                        log(
+                            f'依赖版本不匹配: [{reqStr}] (当前 vendor 版本为 {currentVer})，准备更新',
+                            level='WARNING',
+                        )
+                        missingOrOutdatedReqs.append(reqStr)
+                    else:
+                        log(
+                            f'依赖已满足: [{reqStr}] (已有版本 {currentVer})，跳过安装。',
+                            level='INFO',
+                        )
+            except Exception as e:
+                log(f'解析依赖声明 [{reqStr}] 失败 ({e})，将强制交由 pip 处理', level='WARNING')
+                missingOrOutdatedReqs.append(reqStr)
+
+        if not missingOrOutdatedReqs:
+            log('所有插件依赖项均已满足，无需重复安装！', level='SUCCESS')
+            return True
+
+        # 显式预检 Python 环境是否支持 pip 模块
+        try:
+            import pip  # noqa: F401
+        except ImportError:
+            log('环境致命错误: 当前 Python 解释器缺少 pip 模块，无法安装依赖包！', level='ERROR')
+            return False
+
+        log(
+            f'需安装/更新 {len(missingOrOutdatedReqs)} 项依赖，交由 pip 安装至 vendor 目录...',
+            level='INFO',
+        )
+
+        # 将依赖写入临时文件
+        import tempfile
+
+        tmpReqPath = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode='w+', delete=False, suffix='_req.txt', encoding='utf-8'
+            ) as tmp:
+                tmp.write('\n'.join(missingOrOutdatedReqs))
+                tmpReqPath = tmp.name
+
+            # 先应用 config.ini 中的代理配置（若有）
+            self.config.applyGlobalProxy()
+
+            # 构建基本的 pip 命令
+            cmd = [
+                sys.executable,
+                '-m',
+                'pip',
+                'install',
+                '-v',
+                '--target',
+                vendorDir,
+                '--upgrade',
             ]
 
-        missingPackages = []
-        for line in lines:
-            pkgName = line.split('==')[0].split('>=')[0].strip()
-            if not self.isPackageAvailable(pkgName, vendorDir):
-                missingPackages.append(line)
+            # 动态注入 config.ini 中配置的镜像源 indexUrl
+            index_url = self.config.getCleanOption('pip', 'indexUrl') or self.config.getCleanOption('pip', 'indexurl')
+            if index_url:
+                cmd.extend(['-i', index_url])
+                log(f'正在使用自定义镜像源地址: {index_url}', level='INFO')
 
-        if not missingPackages:
-            return
+            # 补全 requirement 文件路径
+            cmd.extend(['-r', tmpReqPath])
 
-        logger_func(f'检测到缺失的依赖项 {missingPackages}，准备隔离安装...', 'INFO')
-        indexUrl = self.getPipOption('indexUrl')
-        proxy = self.getPipOption('proxy')
-
-        cmd = [
-            sys.executable,
-            '-m',
-            'pip',
-            'install',
-            '-t',
-            vendorDir,
-            '-r',
-            reqPath,
-        ]
-        if indexUrl:
-            cmd.extend(['-i', indexUrl])
-        if proxy:
-            cmd.extend(['--proxy', proxy])
-
-        try:
-            res = subprocess.run(
-                cmd, capture_output=True, text=True, check=True
+            # 实时流式读取管道输出
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                bufsize=1,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
             )
-            logger_func(f'依赖安装成功: {res.stdout.strip()}', 'INFO')
-        except Exception as err:
-            logger_func(f'依赖隔离安装失败: {err}', 'ERROR')
-            raise RuntimeError(f'依赖安装失败，请检查网络或配置: {err}')
 
-    def isPackageAvailable(self, pkgName, vendorDir):
-        sysPathBackup = list(sys.path)
-        if vendorDir not in sys.path:
-            sys.path.insert(0, vendorDir)
-        try:
-            importlib.import_module(pkgName)
-            return True
-        except ImportError:
+            has_error = False
+
+            if process.stdout:
+                for line in iter(process.stdout.readline, ''):
+                    cleanLine = line.strip()
+                    if not cleanLine:
+                        continue
+
+                    if cleanLine.startswith('ERROR:') or 'No module named' in cleanLine or 'Traceback' in cleanLine:
+                        log(cleanLine, level='ERROR')
+                        has_error = True
+                    elif cleanLine.startswith('WARNING:'):
+                        log(cleanLine, level='WARNING')
+                    else:
+                        log(cleanLine, level='INFO')
+
+                process.stdout.close()
+
+            process.wait()
+
+            # 双重校验
+            if process.returncode == 0 and not has_error:
+                log('插件缺失依赖项已成功集中安装至 vendor 目录！', level='SUCCESS')
+                return True
+            else:
+                log(f'pip 执行失败 (exit code: {process.returncode})，请检查 Python 环境或依赖声明！', level='ERROR')
+                return False
+        except Exception as e:
+            log(f'执行 pip 安装时发生致命异常: {e}', level='ERROR')
             return False
         finally:
-            sys.path = sysPathBackup
+            if tmpReqPath and os.path.exists(tmpReqPath):
+                try:
+                    os.remove(tmpReqPath)
+                except OSError:
+                    pass

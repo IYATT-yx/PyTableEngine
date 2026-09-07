@@ -7,3 +7,4 @@ nuitka-crash-report.xml
 config.ini
 extensions/*
 !extensions/IYATT_DemoPlugin/
+vendor/

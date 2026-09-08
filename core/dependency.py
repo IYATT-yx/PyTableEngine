@@ -20,6 +20,7 @@ class Dependency:
 
     def __init__(self, config: Config):
         self.config = config
+        self.lastError: str|None = None
 
     def getInstalledVendorPackages(self, vendorDir: str) -> dict[str, str]:
         '''
@@ -48,6 +49,8 @@ class Dependency:
         '''
         扫描所有插件的 requirements.txt，进行预检；仅在缺失或版本不匹配时增量安装
         '''
+        self.lastError = None
+
         def log(msg: str, level: str='INFO'):
             logCallback(msg, level)
 
@@ -115,9 +118,11 @@ class Dependency:
 
         # 显式预检 Python 环境是否支持 pip 模块
         try:
-            import pip  # noqa: F401
+            import pip
         except ImportError:
-            log('环境致命错误: 当前 Python 解释器缺少 pip 模块，无法安装依赖包！', level='ERROR')
+            errMsg = '环境致命错误: 当前 Python 解释器缺少 pip 模块，无法安装依赖包！'
+            log(errMsg, level='ERROR')
+            self.lastError = errMsg
             return False
 
         log(
@@ -125,7 +130,6 @@ class Dependency:
             level='INFO',
         )
 
-        # 将依赖写入临时文件
         import tempfile
 
         tmpReqPath = None
@@ -136,10 +140,8 @@ class Dependency:
                 tmp.write('\n'.join(missingOrOutdatedReqs))
                 tmpReqPath = tmp.name
 
-            # 先应用 config.ini 中的代理配置（若有）
             self.config.applyGlobalProxy()
 
-            # 构建基本的 pip 命令
             cmd = [
                 sys.executable,
                 '-m',
@@ -151,16 +153,13 @@ class Dependency:
                 '--upgrade',
             ]
 
-            # 动态注入 config.ini 中配置的镜像源 indexUrl
             index_url = self.config.getCleanOption('pip', 'indexUrl') or self.config.getCleanOption('pip', 'indexurl')
             if index_url:
                 cmd.extend(['-i', index_url])
                 log(f'正在使用自定义镜像源地址: {index_url}', level='INFO')
 
-            # 补全 requirement 文件路径
             cmd.extend(['-r', tmpReqPath])
 
-            # 实时流式读取管道输出
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -172,7 +171,9 @@ class Dependency:
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
             )
 
-            has_error = False
+            hasError: bool = False
+            collectedErrors: list[str] = []
+            is_in_traceback: bool = False
 
             if process.stdout:
                 for line in iter(process.stdout.readline, ''):
@@ -180,9 +181,22 @@ class Dependency:
                     if not cleanLine:
                         continue
 
-                    if cleanLine.startswith('ERROR:') or 'No module named' in cleanLine or 'Traceback' in cleanLine:
+                    # 只要触发错误标记或进入 Traceback 状态，后续相关行全部当作错误收集
+                    if 'Traceback (most recent call last):' in cleanLine or cleanLine.startswith('ERROR:'):
+                        is_in_traceback = True
+                        hasError = True
+
+                    if (
+                        hasError
+                        or cleanLine.startswith('ERROR:')
+                        or 'No module named' in cleanLine
+                        or 'PermissionError' in cleanLine
+                        or 'WinError' in cleanLine
+                        or 'Access is denied' in cleanLine
+                    ):
                         log(cleanLine, level='ERROR')
-                        has_error = True
+                        hasError = True
+                        collectedErrors.append(cleanLine)
                     elif cleanLine.startswith('WARNING:'):
                         log(cleanLine, level='WARNING')
                     else:
@@ -192,15 +206,19 @@ class Dependency:
 
             process.wait()
 
-            # 双重校验
-            if process.returncode == 0 and not has_error:
+            if process.returncode == 0 and not hasError:
                 log('插件缺失依赖项已成功集中安装至 vendor 目录！', level='SUCCESS')
                 return True
             else:
-                log(f'pip 执行失败 (exit code: {process.returncode})，请检查 Python 环境或依赖声明！', level='ERROR')
+                errDetail = "\n".join(collectedErrors) if collectedErrors else f"exit code: {process.returncode}"
+                errMsg = f'pip 执行失败:\n{errDetail}'
+                log(f'pip 执行失败，请检查 Python 环境或依赖声明！', level='ERROR')
+                self.lastError = errMsg
                 return False
         except Exception as e:
-            log(f'执行 pip 安装时发生致命异常: {e}', level='ERROR')
+            errMsg = f'执行 pip 安装时发生致命异常: {e}'
+            log(errMsg, level='ERROR')
+            self.lastError = errMsg
             return False
         finally:
             if tmpReqPath and os.path.exists(tmpReqPath):

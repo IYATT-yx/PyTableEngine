@@ -15,6 +15,7 @@ import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 import inspect
+import subprocess
 
 import pythoncom
 import win32com.client
@@ -25,7 +26,6 @@ from core.config import Config
 from core.dependency import Dependency
 from core.logger import AppLogger
 from core.runner import pluginRunnerTask
-
 
 class MainWindow:
     '''Tkinter 主界面管理类'''
@@ -66,6 +66,18 @@ class MainWindow:
 
         # 延迟 100ms 触发依赖检查与插件扫描（确保界面先渲染出来）
         self.root.after(100, self.processDependenciesAndScan)
+
+    def restartSystem(self):
+        '''重启当前应用程序进程'''
+        if messagebox.askyesno('确认重启', '重启系统将重新加载所有 Python 环境与插件，是否继续？'):
+            self.appendLog('正在准备重启系统...', level='INFO')
+            self.root.destroy()
+            subprocess.Popen(constants.Command.executableCommandString)
+            sys.exit(0)
+
+    def refreshPluginsAndDependencies(self):
+        '''手动刷新：重新检查安装依赖项，并扫描重新加载所有插件'''
+        self.processDependenciesAndScan()
 
     def setupVendorPath(self):
         '''给主进程挂载 vendor 目录及 Windows DLL 路径'''
@@ -180,28 +192,49 @@ class MainWindow:
         depThread = threading.Thread(target=workerTask, daemon=True)
         depThread.start()
 
-    def onDependenciesFinished(self, isSuccess: bool, errorMsg: str|None = None):
+    def onDependenciesFinished(self, isSuccess: bool, errorMsg: str | None = None):
         '''依赖项处理完毕后的回调函数（运行在主线程）'''
-        if errorMsg:
-            messagebox.showerror('依赖错误', f'处理插件依赖时发生异常: {errorMsg}')
-        elif not isSuccess:
-            messagebox.showwarning(
-                '依赖警告',
-                '部分依赖项安装失败，相关插件可能无法正常运行！',
-            )
+        
+        # 优先处理安装失败/异常的情况
+        if not isSuccess or errorMsg:
+            final_err = errorMsg or self.depManager.lastError or ""
+            
+            if final_err:
+                # 转为小写进行不区分大小写匹配
+                err_lower = final_err.lower()
+                lock_keywords = [
+                    'permissionerror', 
+                    'winerror 5', 
+                    '_handle_target_dir', 
+                    'rmtree', 
+                    'access is denied',
+                    '拒绝访问'
+                ]
+                is_file_locked = any(kw in err_lower for kw in lock_keywords)
 
-        # 刷新 Python 导入系统的路径与规范缓存
+                if is_file_locked:
+                    result = messagebox.askyesno(
+                        '依赖文件锁冲突',
+                        '检测到部分依赖文件（如 .pyd / .dll）正被当前应用程序或后台进程占用，导致 pip 无法覆盖更新。\n\n'
+                        '是否立即重启系统以释放文件锁并自动完成安装？'
+                    )
+                    if result:
+                        self.restartSystem()
+                        return  # 用户选择重启，直接退出
+                else:
+                    messagebox.showerror('依赖错误', f'处理插件依赖时发生异常:\n{final_err}')
+            else:
+                messagebox.showwarning('依赖警告', '部分依赖项安装失败，相关插件可能无法正常运行！')
+
         importlib.invalidate_caches()
-
-        # 重新挂载 vendor 路径，确保新生成的 .libs 或 C 扩展动态链接库被识别
         self.setupVendorPath()
-
-        # 依赖全部就绪后，开始安全地扫描插件
         self.scanPlugins()
-
-        # 解锁界面交互，恢复用户操作
         self.setUiInteractive(True)
-        self.appendLog('系统初始化就绪，插件环境加载完毕。', level='SUCCESS')
+        
+        if isSuccess:
+            self.appendLog('系统刷新完毕，插件环境与列表均已重载。', level='SUCCESS')
+        else:
+            self.appendLog('依赖项未完全就绪，系统已恢复交互，请检查错误日志。', level='WARNING')
 
     def initUiComponents(self):
         # 顶部 COM 接口选择栏
@@ -250,8 +283,13 @@ class MainWindow:
         )
         self.toggleBtn.pack(side=tk.RIGHT, padx=5)
 
+        self.restartBtn = ttk.Button(
+            searchFrame, text='重启系统', command=self.restartSystem
+        )
+        self.restartBtn.pack(side=tk.RIGHT, padx=5)
+
         self.refreshBtn = ttk.Button(
-            searchFrame, text='刷新列表', command=self.scanPlugins
+            searchFrame, text='重新扫描', command=self.refreshPluginsAndDependencies
         )
         self.refreshBtn.pack(side=tk.RIGHT, padx=5)
 

@@ -8,6 +8,7 @@ copyright: Copyright (c) 2026 IYATT-yx.
 import os
 import subprocess
 import sys
+import tempfile
 from importlib.metadata import Distribution
 from pathlib import Path
 from packaging.requirements import Requirement
@@ -21,7 +22,7 @@ class Dependency:
 
     def __init__(self, config: Config):
         self.config = config
-        self.lastError: str|None = None
+        self.lastError: str | None = None
 
     def getInstalledVendorPackages(self, vendorDir: str) -> dict[str, str]:
         '''
@@ -36,10 +37,8 @@ class Dependency:
         if not vendorPath.exists():
             return installed
 
-        # 发现 vendorPath 目录下所有的 Distribution 元数据
         distributions = Distribution.discover(path=[str(vendorPath)])
         for dist in distributions:
-            # 统一转为小写便于规范化匹配 (如 NumPy -> numpy)
             pkgName = dist.metadata['Name'].lower()
             pkgVersion = dist.version
             installed[pkgName] = pkgVersion
@@ -52,14 +51,13 @@ class Dependency:
         '''
         self.lastError = None
 
-        def log(msg: str, level: str='INFO'):
+        def log(msg: str, level: str = 'INFO'):
             logCallback(msg, level)
 
         vendorDir = constants.Path.vendor
         if not os.path.exists(vendorDir):
             os.makedirs(vendorDir, exist_ok=True)
 
-        # 收集所有插件的 requirements 声明
         allRequirements: set[str] = set()
         if os.path.exists(extensionsDir):
             for folder in os.listdir(extensionsDir):
@@ -81,10 +79,8 @@ class Dependency:
             level='INFO',
         )
 
-        # 读取 vendor 目录当前已安装的包
         installedVendorPkgs = self.getInstalledVendorPackages(vendorDir)
 
-        # 筛选出真正需要安装/更新的依赖项
         missingOrOutdatedReqs: list[str] = []
         for reqStr in allRequirements:
             try:
@@ -115,7 +111,6 @@ class Dependency:
             log('所有插件依赖项均已满足，无需重复安装！', level='SUCCESS')
             return True
 
-        # 显式预检 Python 环境是否支持 pip 模块
         try:
             import pip
         except ImportError:
@@ -129,8 +124,6 @@ class Dependency:
             level='INFO',
         )
 
-        import tempfile
-
         tmpReqPath = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -138,8 +131,6 @@ class Dependency:
             ) as tmp:
                 tmp.write('\n'.join(missingOrOutdatedReqs))
                 tmpReqPath = tmp.name
-
-            self.config.applyGlobalProxy()
 
             cmd = [
                 sys.executable,
@@ -152,10 +143,21 @@ class Dependency:
                 '--upgrade',
             ]
 
-            index_url = self.config.getCleanOption('pip', 'indexUrl') or self.config.getCleanOption('pip', 'indexurl')
-            if index_url:
-                cmd.extend(['-i', index_url])
-                log(f'正在使用自定义镜像源地址: {index_url}', level='INFO')
+            # 读取 [pip] pypi 配置
+            pypiIndexUrl = self.config.getCleanOption('pip', 'pypi')
+            if pypiIndexUrl:
+                cmd.extend(['-i', pypiIndexUrl])
+                log(f'正在使用镜像源地址: {pypiIndexUrl}', level='INFO')
+            else:
+                log('未配置或留空 PyPI 镜像源，将使用 pip 默认源', level='INFO')
+
+            # 读取 [pip] proxy 配置
+            pipProxy = self.config.getCleanOption('pip', 'proxy')
+            if pipProxy:
+                cmd.extend(['--proxy', pipProxy])
+                log(f'正在使用网络代理: {pipProxy}', level='INFO')
+            else:
+                log('未配置或留空网络代理，将直接进行连接', level='INFO')
 
             cmd.extend(['-r', tmpReqPath])
 
@@ -172,7 +174,7 @@ class Dependency:
 
             hasError: bool = False
             collectedErrors: list[str] = []
-            is_in_traceback: bool = False
+            isInTraceback: bool = False
 
             if process.stdout:
                 for line in iter(process.stdout.readline, ''):
@@ -180,9 +182,8 @@ class Dependency:
                     if not cleanLine:
                         continue
 
-                    # 只要触发错误标记或进入 Traceback 状态，后续相关行全部当作错误收集
                     if 'Traceback (most recent call last):' in cleanLine or cleanLine.startswith('ERROR:'):
-                        is_in_traceback = True
+                        isInTraceback = True
                         hasError = True
 
                     if (
@@ -211,7 +212,7 @@ class Dependency:
             else:
                 errDetail = "\n".join(collectedErrors) if collectedErrors else f"exit code: {process.returncode}"
                 errMsg = f'pip 执行失败:\n{errDetail}'
-                log(f'pip 执行失败，请检查 Python 环境或依赖声明！', level='ERROR')
+                log('pip 执行失败，请检查 Python 环境或依赖声明！', level='ERROR')
                 self.lastError = errMsg
                 return False
         except Exception as e:

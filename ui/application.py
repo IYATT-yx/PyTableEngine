@@ -356,29 +356,6 @@ class MainWindow:
             self.pluginTree.selection_set(item)
             self.contextMenu.post(event.x_root, event.y_root)
 
-    def getDisabledPluginsFromConfig(self):
-        config = configparser.ConfigParser()
-        if os.path.exists(self.configPath):
-            config.read(self.configPath, encoding='utf-8')
-        if config.has_section('disabled_plugins'):
-            return dict(config.items('disabled_plugins'))
-        return {}
-
-    def setPluginDisabledConfig(self, pluginKey, isDisabled):
-        config = configparser.ConfigParser()
-        if os.path.exists(self.configPath):
-            config.read(self.configPath, encoding='utf-8')
-        if not config.has_section('disabled_plugins'):
-            config.add_section('disabled_plugins')
-
-        if isDisabled:
-            config.set('disabled_plugins', pluginKey, 'true')
-        else:
-            config.remove_option('disabled_plugins', pluginKey)
-
-        with open(self.configPath, 'w', encoding='utf-8') as f:
-            config.write(f)
-
     def connectCom(self):
         displayName = self.comCombo.get()
         progId = self.comProgIdMap[displayName]
@@ -408,7 +385,7 @@ class MainWindow:
         if not os.path.exists(extensionsDir):
             os.makedirs(extensionsDir, exist_ok=True)
 
-        disabledMap = self.getDisabledPluginsFromConfig()
+        disabledMap = self.config.getDisabledPlugins()
 
         for folder in os.listdir(extensionsDir):
             pluginDir = os.path.join(extensionsDir, folder)
@@ -561,7 +538,7 @@ class MainWindow:
         if targetPlugin['status'] == '已加载':
             targetPlugin['status'] = '已禁用'
             targetPlugin['tag'] = 'DISABLED'
-            self.setPluginDisabledConfig(pluginKey, True)
+            self.config.setDisabledPlugins(pluginKey, True)
             self.appendLog(
                 f'插件 [{targetPlugin["author"]}_{targetPlugin["name"]}] 已禁用。',
                 level='WARNING'
@@ -569,7 +546,7 @@ class MainWindow:
         else:
             targetPlugin['status'] = '已加载'
             targetPlugin['tag'] = 'ENABLED'
-            self.setPluginDisabledConfig(pluginKey, False)
+            self.config.setDisabledPlugins(pluginKey, False)
             self.appendLog(
                 f'插件 [{targetPlugin["author"]}_{targetPlugin["name"]}] 已恢复启用。',
                 level='INFO'

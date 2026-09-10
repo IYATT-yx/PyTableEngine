@@ -2,8 +2,8 @@
 file: config.py
 description: 配置管理器
 author: IYATT-yx
-copyright:  Copyright (c) 2026 IYATT-yx.
-            Licensed under the MIT License. See LICENSE file in the project root for full license information.
+copyright: Copyright (c) 2026 IYATT-yx.
+           Licensed under the MIT License. See LICENSE file in the project root for full license information.
 '''
 import configparser
 import os
@@ -27,8 +27,15 @@ class Config:
 
     def generateDefaultConfig(self):
         '''自动生成默认 config.ini'''
+        parentDir = os.path.dirname(self.configPath)
+        os.makedirs(parentDir, exist_ok=True)
+
         self.config['pip'] = {
-            'indexUrl': 'https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple',
+            'pypi': constants.Site.pypi,
+            'proxy': ''
+        }
+        self.config['market'] = {
+            'repo_index': constants.Site.repositoryIndex,
             'proxy': ''
         }
         self.config['disabled_plugins'] = {}
@@ -46,31 +53,20 @@ class Config:
             return val if val else None
         return None
 
-    def applyGlobalProxy(self):
-        '''将 config.ini 中的代理设置全局注入当前进程环境变量'''
-        proxyUrl = self.getCleanOption('pip', 'proxy')
-        if proxyUrl:
-            os.environ['HTTP_PROXY'] = proxyUrl
-            os.environ['HTTPS_PROXY'] = proxyUrl
-            os.environ['http_proxy'] = proxyUrl
-            os.environ['https_proxy'] = proxyUrl
-        else:
-            # 若未配置或为空，清理可能继承自系统的代理环境变量，防止干扰
-            for env_key in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
-                os.environ.pop(env_key, None)
-
-    # ---- 禁用插件记录相关逻辑 ----
     def getDisabledPlugins(self):
+        '''获取被禁用的插件字典列表'''
         if self.config.has_section('disabled_plugins'):
             return dict(self.config.items('disabled_plugins'))
         return {}
 
-    def setPluginDisabled(self, plugin_key, is_disabled):
+    def setDisabledPlugins(self, pluginId:str, isDisabled:bool):
+        '''设置插件禁用状态'''
         if not self.config.has_section('disabled_plugins'):
             self.config.add_section('disabled_plugins')
 
-        if is_disabled:
-            self.config.set('disabled_plugins', plugin_key, 'true')
+        if isDisabled:
+            self.config.set('disabled_plugins', pluginId, 'true')
         else:
-            self.config.remove_option('disabled_plugins', plugin_key)
+            self.config.remove_option('disabled_plugins', pluginId)
+
         self.save()

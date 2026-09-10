@@ -20,5 +20,6 @@ class Command:
     argv0 = os.path.abspath(sys.argv[0])
     executableCommandString = argv0 if Path.isPackaged else sys.executable + ' ' + argv0
 
-class Plugin:
+class Site:
+    pypi =  'https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple'
     repositoryIndex = 'https://raw.githubusercontent.com/IYATT-yx/PyTableEnginePluginRepository/main/index.json'

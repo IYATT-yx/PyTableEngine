@@ -5,7 +5,6 @@ author: IYATT-yx
 copyright:   Copyright (c) 2026 IYATT-yx.
              Licensed under the MIT License. See LICENSE file in the project root for full license information.
 '''
-import configparser
 import importlib.util
 import multiprocessing
 import os
@@ -16,6 +15,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import inspect
 import subprocess
+import json
+import datetime
 
 import pythoncom
 import win32com.client
@@ -26,6 +27,7 @@ from core.config import Config
 from core.dependency import Dependency
 from core.logger import AppLogger
 from core.runner import pluginRunnerTask
+from core.market import Market
 
 class MainWindow:
     '''Tkinter 主界面管理类'''
@@ -46,6 +48,7 @@ class MainWindow:
         # 配置与依赖管理器初始化
         self.config = Config()
         self.depManager = Dependency(self.config)
+        self.market = Market(self.config)
 
         self.comProgIdMap = {
             'Excel (Microsoft Office)': 'Excel.Application',
@@ -54,6 +57,7 @@ class MainWindow:
         }
 
         self.loadedPlugins = []
+        self.marketPluginsData = {}  # 存储远端拉取到的市场插件原始数据
         self.activeProcess = None
         self.logQueue = multiprocessing.Queue()
         self.configPath = constants.Path.config
@@ -78,6 +82,67 @@ class MainWindow:
     def refreshPluginsAndDependencies(self):
         '''手动刷新：重新检查安装依赖项，并扫描重新加载所有插件'''
         self.processDependenciesAndScan()
+
+    def _parseUtcToLocal(self, utcStr: str) -> str:
+        '''将 UTC 时间字符串转换为本地时区时间字符串'''
+        if not utcStr:
+            return '未知'
+        
+        # 清理字符串
+        cleanStr = utcStr.strip()
+        
+        try:
+            # 兼容处理 "2026-09-09 17:02:55 UTC" 格式
+            if cleanStr.endswith('UTC'):
+                cleanStr = cleanStr[:-3].strip()
+                dt = datetime.datetime.strptime(cleanStr, '%Y-%m-%d %H:%M:%S')
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            else:
+                # 兼容带 T / ISO 的其他常规格式
+                cleanStr = cleanStr.replace('Z', '+00:00')
+                dt = datetime.datetime.fromisoformat(cleanStr)
+
+            # 转换为本地时区
+            localDt = dt.astimezone()
+            return localDt.strftime('%Y-%m-%d %H:%M')
+        except Exception:
+            return str(utcStr)  # 转换失败则降级显示原始字符串
+
+    def _getLocalPluginMeta(self, pluginId: str) -> dict:
+        '''
+        获取本地已安装插件的市场元数据 (由 market.py 在安装时写入)
+        '''
+        # 将 manifest.json 修改为 install_meta.json
+        metaPath = os.path.join(constants.Path.extensions, pluginId, 'install_meta.json')
+        if os.path.exists(metaPath):
+            try:
+                with open(metaPath, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _getPluginStatus(self, pluginId: str, marketCommitHash: str) -> str:
+        '''
+        基于 Commit Hash 判定插件状态
+        '''
+        pluginDir = os.path.join(constants.Path.extensions, pluginId)
+        if not os.path.exists(pluginDir):
+            return '未安装'
+
+        localMeta = self._getLocalPluginMeta(pluginId)
+        
+        # 如果是开发者自己在 extensions 目录下新建的插件，无安装元数据或标记了 isDev
+        if localMeta.get('isDev', False) or 'commitHash' not in localMeta:
+            return '开发版'
+
+        localCommit = localMeta.get('commitHash', '')
+
+        # 核心对比：Git Commit Hash 是否一致
+        if marketCommitHash and localCommit != marketCommitHash:
+            return '可升级'
+
+        return '已安装'
 
     def setupVendorPath(self):
         '''给主进程挂载 vendor 目录及 Windows DLL 路径'''
@@ -263,11 +328,15 @@ class MainWindow:
         )
         self.comStatusLabel.pack(side=tk.LEFT, padx=10)
 
-        # 中间搜索过滤与插件表格
-        midFrame = ttk.LabelFrame(self.root, text=' 插件列表 ', padding=10)
-        midFrame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        # 标签页容器
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        searchFrame = ttk.Frame(midFrame)
+        # === 选项卡 1: 本地插件管理 ===
+        localTab = ttk.Frame(self.notebook, padding=5)
+        self.notebook.add(localTab, text=' 已安装插件 ')
+
+        searchFrame = ttk.Frame(localTab)
         searchFrame.pack(fill=tk.X, pady=5)
 
         ttk.Label(searchFrame, text='搜索插件:').pack(side=tk.LEFT, padx=5)
@@ -295,7 +364,7 @@ class MainWindow:
 
         columns = ('name', 'author', 'status', 'description', 'version', 'entryType')
         self.pluginTree = ttk.Treeview(
-            midFrame, columns=columns, show='headings', selectmode='browse'
+            localTab, columns=columns, show='headings', selectmode='browse'
         )
 
         self.pluginTree.heading('name', text='插件名')
@@ -318,7 +387,7 @@ class MainWindow:
         self.pluginTree.tag_configure('VALID_FAILED', foreground='red')
 
         treeScroll = ttk.Scrollbar(
-            midFrame, orient=tk.VERTICAL, command=self.pluginTree.yview
+            localTab, orient=tk.VERTICAL, command=self.pluginTree.yview
         )
         self.pluginTree.configure(yscrollcommand=treeScroll.set)
 
@@ -333,7 +402,72 @@ class MainWindow:
         )
         self.pluginTree.bind('<Button-3>', self.showContextMenu)
 
-        # 3. 底部运行日志栏
+        # === 选项卡 2: 插件市场 (原代码中找到这部分进行替换) ===
+        marketTab = ttk.Frame(self.notebook, padding=5)
+        self.notebook.add(marketTab, text=' 插件市场 ')
+
+        marketSearchFrame = ttk.Frame(marketTab)
+        marketSearchFrame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(marketSearchFrame, text='搜索市场插件:').pack(side=tk.LEFT, padx=5)
+        self.marketSearchVar = tk.StringVar()
+        self.marketSearchVar.trace_add('write', self.filterMarketPlugins)
+        self.marketSearchEntry = ttk.Entry(
+            marketSearchFrame, textvariable=self.marketSearchVar, width=25
+        )
+        self.marketSearchEntry.pack(side=tk.LEFT, padx=5)
+
+        self.installMarketBtn = ttk.Button(
+            marketSearchFrame, text='安装/升级选中插件', command=self.installSelectedMarketPlugin
+        )
+        self.installMarketBtn.pack(side=tk.RIGHT, padx=5)
+
+        self.refreshMarketBtn = ttk.Button(
+            marketSearchFrame, text='刷新索引', command=self.fetchMarketIndex
+        )
+        self.refreshMarketBtn.pack(side=tk.RIGHT, padx=5)
+
+        # 重新定义列 (注意我们把 id 放在里面用于数据流转，但在 displaycolumns 中隐藏它)
+        marketColumns = ('id', 'name', 'author', 'github', 'status', 'description', 'version', 'updateTime')
+        self.marketTree = ttk.Treeview(
+            marketTab, columns=marketColumns, show='headings', selectmode='browse',
+            displaycolumns=('name', 'author', 'github', 'status', 'description', 'version', 'updateTime')
+        )
+
+        self.marketTree.heading('name', text='插件名')
+        self.marketTree.heading('author', text='作者')
+        self.marketTree.heading('github', text='GitHub')
+        self.marketTree.heading('status', text='状态')
+        self.marketTree.heading('description', text='功能描述')
+        self.marketTree.heading('version', text='最新版本')
+        self.marketTree.heading('updateTime', text='更新日期')
+
+        # 调整列宽
+        self.marketTree.column('name', width=120)
+        self.marketTree.column('author', width=80)
+        self.marketTree.column('github', width=100)
+        self.marketTree.column('status', width=60, anchor=tk.CENTER)
+        self.marketTree.column('description', width=280)
+        self.marketTree.column('version', width=70, anchor=tk.CENTER)
+        self.marketTree.column('updateTime', width=130, anchor=tk.CENTER)
+
+        # 状态着色标签配置
+        self.marketTree.tag_configure('STATUS_INSTALLED', foreground='#16a34a')    # 已安装：绿色
+        self.marketTree.tag_configure('STATUS_UPDATABLE', foreground='#d97706')    # 可升级：橙色
+        self.marketTree.tag_configure('STATUS_DEV', foreground='#2563eb')          # 开发版：蓝色
+        self.marketTree.tag_configure('STATUS_UNINSTALLED', foreground='#6b7280')    # 未安装：灰色
+
+        marketScroll = ttk.Scrollbar(
+            marketTab, orient=tk.VERTICAL, command=self.marketTree.yview
+        )
+        self.marketTree.configure(yscrollcommand=marketScroll.set)
+
+        self.marketTree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        marketScroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.marketTree.bind('<Double-1>', lambda event: self.installSelectedMarketPlugin())
+
+        # 底部运行日志栏
         bottomFrame = ttk.LabelFrame(self.root, text=' 运行日志 ', padding=5)
         bottomFrame.pack(fill=tk.X, padx=10, pady=5)
 
@@ -344,12 +478,111 @@ class MainWindow:
         self.logText.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         logScroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # 配置日志颜色标签
         self.logText.tag_config('INFO', foreground='#2b2b2b')
         self.logText.tag_config('WARNING', foreground='#d97706')
         self.logText.tag_config('ERROR', foreground='#dc2626')
         self.logText.tag_config('SUCCESS', foreground='#16a34a')
 
+    def fetchMarketIndex(self):
+        '''联网获取并刷新插件市场索引'''
+        def work():
+            data = self.market.fetchRepositoryIndex(logCallback=self.appendLog)
+            if data and isinstance(data, dict):
+                self.marketPluginsData = data.get('plugins', {})
+                self.root.after(0, self.filterMarketPlugins)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def filterMarketPlugins(self, *args):
+        '''根据关键字实时过滤市场插件树'''
+        keyword = self.marketSearchVar.get().strip().lower()
+
+        for item in self.marketTree.get_children():
+            self.marketTree.delete(item)
+
+        for pId, pInfo in self.marketPluginsData.items():
+            name = str(pInfo.get('pluginName', pId))
+            author = str(pInfo.get('author', '未知'))
+            github = str(pInfo.get('owner', '-'))
+            desc = str(pInfo.get('description', ''))
+            version = str(pInfo.get('version', '0.0.1'))
+            marketCommit = str(pInfo.get('commitHash', ''))
+            
+            # updatedAt 仅用于界面显示，转为本地时间
+            rawUpdateTime = str(pInfo.get('updatedAt', ''))
+            localUpdateTime = self._parseUtcToLocal(rawUpdateTime)
+
+            # 基于 commitHash 判定状态
+            status = self._getPluginStatus(pId, marketCommit)
+
+            if (
+                not keyword
+                or keyword in pId.lower()
+                or keyword in name.lower()
+                or keyword in author.lower()
+                or keyword in github.lower()
+                or keyword in desc.lower()
+            ):
+                item_id = self.marketTree.insert(
+                    '',
+                    tk.END,
+                    values=(pId, name, author, github, status, desc, version, localUpdateTime)
+                )
+                
+                # 状态着色
+                if status == '已安装':
+                    self.marketTree.item(item_id, tags=('STATUS_INSTALLED',))
+                elif status == '可升级':
+                    self.marketTree.item(item_id, tags=('STATUS_UPDATABLE',))
+                elif status == '开发版':
+                    self.marketTree.item(item_id, tags=('STATUS_DEV',))
+                else:
+                    self.marketTree.item(item_id, tags=('STATUS_UNINSTALLED',))
+
+    def installSelectedMarketPlugin(self):
+        '''安装或升级选中的市场插件'''
+        selection = self.marketTree.selection()
+        if not selection:
+            messagebox.showwarning('提示', '请先在列表中选择要安装或升级的插件！', parent=self.root)
+            return
+
+        itemValues = self.marketTree.item(selection[0], 'values')
+        if not itemValues:
+            return
+
+        pluginId = itemValues[0]  # 第一列是隐藏的 pluginId
+        pluginInfo = self.marketPluginsData.get(pluginId)
+        if not pluginInfo:
+            messagebox.showerror('错误', f'无法获取插件 [{pluginId}] 的元数据！', parent=self.root)
+            return
+
+        # 禁用按钮防止重复点击
+        self.installMarketBtn.config(state=tk.DISABLED)
+
+        def worker():
+            # 内部会自动写入 install_meta.json
+            success = self.market.installPlugin(
+                pluginId,
+                pluginInfo,
+                logCallback=lambda msg, level: self.appendLog(msg, level)
+            )
+            # 回到主线程更新 UI
+            self.root.after(0, lambda: self._onInstallFinished(success, pluginId))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _onInstallFinished(self, success: bool, pluginId: str):
+        '''安装完成后的主线程回调'''
+        self.installMarketBtn.config(state=tk.NORMAL)
+        if success:
+            messagebox.showinfo('成功', f'插件 [{pluginId}] 安装/升级成功！', parent=self.root)
+            # 1. 刷新市场列表的状态显示（重新计算颜色与状态）
+            self.filterMarketPlugins()
+            # 2. 重新扫描本地已安装插件列表（更新选项卡 1）
+            self.processDependenciesAndScan()
+        else:
+            messagebox.showerror('失败', f'插件 [{pluginId}] 安装失败，详情请查看运行日志。', parent=self.root)
+        
     def showContextMenu(self, event):
         item = self.pluginTree.identify_row(event.y)
         if item:

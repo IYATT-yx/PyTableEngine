@@ -9,14 +9,8 @@ import multiprocessing
 import tkinter as tk
 from ui.application import MainWindow
 
-from core import config
-
 if __name__ == '__main__':
     multiprocessing.freeze_support()
-
-    configObj = config.Config()
-    configObj.loadConfig()
-    configObj.applyGlobalProxy()
 
     root = tk.Tk()
     app = MainWindow(root)

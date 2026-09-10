@@ -144,7 +144,7 @@ class MainWindow:
         self.setUiInteractive(False)
         self.appendLog('正在准备检查插件依赖项...', level='INFO')
 
-        extensionsDir = os.path.join(constants.Path.appDir, 'extensions')
+        extensionsDir = constants.Path.extensions
 
         def workerTask():
             def logCallback(msg: str, level: str='INFO'):
@@ -404,7 +404,7 @@ class MainWindow:
 
     def scanPlugins(self):
         self.loadedPlugins.clear()
-        extensionsDir = os.path.join(constants.Path.appDir, 'extensions')
+        extensionsDir = constants.Path.extensions
         if not os.path.exists(extensionsDir):
             os.makedirs(extensionsDir, exist_ok=True)
 

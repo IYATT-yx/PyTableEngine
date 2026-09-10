@@ -14,6 +14,7 @@ class Path:
     config = os.path.join(appDir, 'config.ini')
     log = os.path.join(appDir, 'logs', 'PyTableEngine.log')
     vendor = os.path.join(appDir, 'vendor')
+    extensions = os.path.join(appDir, 'extensions')
 
 class Command:
     argv0 = os.path.abspath(sys.argv[0])

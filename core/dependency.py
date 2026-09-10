@@ -14,6 +14,7 @@ from packaging.requirements import Requirement
 from typing import Callable
 
 from core.config import Config
+from core import constants
 
 class Dependency:
     '''插件依赖项集中管理器'''
@@ -54,9 +55,7 @@ class Dependency:
         def log(msg: str, level: str='INFO'):
             logCallback(msg, level)
 
-        vendorDir = os.path.abspath(
-            os.path.join(extensionsDir, '..', 'vendor')
-        )
+        vendorDir = constants.Path.vendor
         if not os.path.exists(vendorDir):
             os.makedirs(vendorDir, exist_ok=True)
 

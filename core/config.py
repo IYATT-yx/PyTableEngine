@@ -35,7 +35,7 @@ class Config:
             'proxy': ''
         }
         self.config['market'] = {
-            'repo_index': constants.Site.repositoryIndex,
+            'repo_index': '',
             'proxy': ''
         }
         self.config['disabled_plugins'] = {}

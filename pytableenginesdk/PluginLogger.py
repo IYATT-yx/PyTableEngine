@@ -33,7 +33,7 @@ class PluginLogger:
         self.plugId = f"{author}_{name}"
         self.isInit = True
 
-    def mLog(self, level: int=INFO, msg: str = ''):
+    def _Log(self, level: int=INFO, msg: str = ''):
         '''
         日志记录
 
@@ -76,7 +76,7 @@ class PluginLogger:
         Args:
             msg (str): 日志内容
         '''
-        self.mLog(self.INFO, msg)
+        self._Log(self.INFO, msg)
 
     def warning(self, msg: str = ''):
         '''
@@ -85,7 +85,7 @@ class PluginLogger:
         Args:
             msg (str): 日志内容
         '''
-        self.mLog(self.WARNING, msg)
+        self._Log(self.WARNING, msg)
 
     def error(self, msg: str = ''):
         '''
@@ -94,4 +94,4 @@ class PluginLogger:
         Args:
             msg (str): 日志内容
         '''
-        self.mLog(self.ERROR, msg)
+        self._Log(self.ERROR, msg)

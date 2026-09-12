@@ -8,3 +8,4 @@ config.ini
 extensions/*
 !extensions/IYATT_DemoPlugin/
 vendor/
+cache/

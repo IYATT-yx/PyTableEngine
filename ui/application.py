@@ -34,6 +34,7 @@ class MainWindow:
 
     def __init__(self, root: tk.Tk):
         self.root = root
+        os.makedirs(constants.Path.cache, exist_ok=True)
         self.root.title(
             f'PyTableEngine 思能快表引擎 by IYATT-yx {buildTime}'
         )
@@ -249,6 +250,7 @@ class MainWindow:
                 isSuccess = self.depManager.collectAndInstallPluginDependencies(
                     extensionsDir, logCallback
                 )
+                self.showIndexPlugins()
             except Exception as err:
                 errorMsg = str(err)
 
@@ -483,14 +485,22 @@ class MainWindow:
         self.logText.tag_config('ERROR', foreground='#dc2626')
         self.logText.tag_config('SUCCESS', foreground='#16a34a')
 
+    def showIndexPlugins(self) -> bool:
+        '''显示插件市场数据'''
+        data = self.market.getCachedRepositoryIndex(self.appendLog)
+        if data and isinstance(data, dict):
+            self.marketPluginsData = data.get('plugins', {})
+            self.root.after(0, self.filterMarketPlugins)
+            return True
+        return False
+
     def fetchMarketIndex(self):
         '''联网获取并刷新插件市场索引'''
         def work():
-            data = self.market.fetchRepositoryIndex(logCallback=self.appendLog)
-            if data and isinstance(data, dict):
-                self.marketPluginsData = data.get('plugins', {})
-                self.root.after(0, self.filterMarketPlugins)
-
+            if not self.market.downloadRepositoryIndex(self.appendLog):
+                return
+            self.root.after(0, self.showIndexPlugins)
+            
         threading.Thread(target=work, daemon=True).start()
 
     def filterMarketPlugins(self, *args):

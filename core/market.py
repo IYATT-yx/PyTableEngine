@@ -27,6 +27,116 @@ class Market:
         self.config = config
         self.lastError: Optional[str] = None
 
+    def downloadRepositoryIndex(self, logCallback: Optional[Callable[[str, str], None]] = None) -> bool:
+        '''
+        仅负责从远程下载插件索引 JSON 并安全写入 cache 目录。
+        采用“写临时文件+原子替换”机制，下载/校验失败时绝不覆盖已有旧缓存。
+        '''
+        self.lastError = None
+        def log(msg: str, level: str = 'INFO'):
+            if logCallback:
+                logCallback(msg, level)
+
+        repoIndexUrl = self.config.getCleanOption('market', 'repo_index')
+        if not repoIndexUrl:
+            repoIndexUrl = constants.Site.repositoryIndex
+            log(f'未检测到自定义 repo_index 配置，使用默认索引源: {repoIndexUrl}', level='INFO')
+        else:
+            log(f'正在使用自定义索引源: {repoIndexUrl}', level='INFO')
+
+        proxyUrl = self._getProxyUrl()
+        if proxyUrl:
+            log(f'网络代理设置: {proxyUrl}', level='INFO')
+        else:
+            log('网络代理设置: 直连 (未配置)', level='INFO')
+
+        cacheFilePath = constants.Path.repositoryIndexFile
+        tempFilePath = cacheFilePath + '.tmp'
+        startTime = time.time()
+
+        try:
+            opener = self._buildOpener()
+            headers = constants.Web.headers
+            req = urllib.request.Request(repoIndexUrl, headers=headers)
+            
+            log('正在向插件仓库发起请求...', level='INFO')
+            with opener.open(req, timeout=30) as resp:
+                elapsed = time.time() - startTime
+                status = getattr(resp, 'status', 200)
+                rawData = resp.read()
+                dataLen = len(rawData)
+                log(f'索引数据下载成功! 状态码: {status}, 耗时: {elapsed:.2f}s, 大小: {dataLen} 字节', level='INFO')
+
+                # 校验 JSON 格式正确性后再写入，防止下载了错误页面/损坏内容
+                indexData = json.loads(rawData.decode('utf-8'))
+                if not isinstance(indexData, (dict, list)):
+                    raise ValueError("下载的 JSON 数据格式不是预期的列表或字典")
+
+                # 写入临时文件并替换目标缓存文件
+                with open(tempFilePath, 'wb') as f:
+                    f.write(rawData)
+                os.replace(tempFilePath, cacheFilePath)
+
+                log('插件索引已安全更新至本地缓存', level='INFO')
+                return True
+
+        except json.JSONDecodeError as e:
+            errMsg = f'解析插件仓库 JSON 数据失败 (格式非法，保留原缓存): {e}'
+            log(errMsg, level='ERROR')
+            self.lastError = errMsg
+        except Exception as e:
+            elapsed = time.time() - startTime
+            errMsg = f'拉取插件仓库索引失败 (用时 {elapsed:.2f}s，保留原缓存): {e}'
+            log(errMsg, level='ERROR')
+            self.lastError = errMsg
+
+        # 出现异常时清理遗留的临时文件
+        if os.path.exists(tempFilePath):
+            try:
+                os.remove(tempFilePath)
+            except OSError:
+                pass
+
+        return False
+
+    def getCachedRepositoryIndex(self, logCallback: Optional[Callable[[str, str], None]] = None) -> Optional[dict]:
+        '''
+        仅从本地 cache 中读取并解析插件索引 JSON（不发起网络请求）。
+        支持启动时快速加载或离线模式下读取。
+        '''
+        self.lastError = None
+        def log(msg: str, level: str = 'INFO'):
+            if logCallback:
+                logCallback(msg, level)
+
+        cacheFilePath = constants.Path.repositoryIndexFile
+        if not os.path.exists(cacheFilePath):
+            errMsg = '本地暂无插件索引缓存文件'
+            log(errMsg, level='WARNING')
+            self.lastError = errMsg
+            return None
+
+        try:
+            with open(cacheFilePath, 'r', encoding='utf-8') as f:
+                parsedData = json.load(f)
+
+            plugins = parsedData.get('plugins', {})
+            pluginCount = len(plugins)
+            pluginIds = list(plugins.keys())
+            log(f'成功读取插件中心索引文件缓存，共包含 {pluginCount} 个插件: {pluginIds}', level='SUCCESS')
+            return parsedData
+
+        except json.JSONDecodeError as e:
+            errMsg = f'读取本地索引缓存失败 (JSON格式损坏): {e}'
+            log(errMsg, level='ERROR')
+            self.lastError = errMsg
+            return None
+        except Exception as e:
+            errMsg = f'读取本地索引缓存文件失败: {e}'
+            log(errMsg, level='ERROR')
+            self.lastError = errMsg
+            return None
+
     def _getProxyUrl(self) -> Optional[str]:
         '''获取清洗后的代理配置'''
         return self.config.getCleanOption('market', 'proxy')
@@ -90,68 +200,6 @@ class Market:
                     os.environ[env_key] = old_val
                 else:
                     os.environ.pop(env_key, None)
-
-    def fetchRepositoryIndex(self, logCallback: Optional[Callable[[str, str], None]] = None) -> Optional[dict]:
-        '''
-        拉取插件索引 JSON
-        优先使用配置中的 market -> repo_index，未配置则回退到 constants.Site.repositoryIndex
-        '''
-        self.lastError = None
-        def log(msg: str, level: str = 'INFO'):
-            if logCallback:
-                logCallback(msg, level)
-
-        repoIndexUrl = self.config.getCleanOption('market', 'repo_index')
-        if not repoIndexUrl:
-            repoIndexUrl = constants.Site.repositoryIndex
-            log(f'未检测到自定义 repo_index 配置，使用默认索引源: {repoIndexUrl}', level='INFO')
-        else:
-            log(f'正在使用自定义索引源: {repoIndexUrl}', level='INFO')
-
-        proxyUrl = self._getProxyUrl()
-        if proxyUrl:
-            log(f'网络代理设置: {proxyUrl}', level='INFO')
-        else:
-            log('网络代理设置: 直连 (未配置)', level='INFO')
-
-        startTime = time.time()
-        try:
-            opener = self._buildOpener()
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json, text/plain, */*',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                'Connection': 'close',
-            }
-            req = urllib.request.Request(repoIndexUrl, headers=headers)
-            
-            log('正在向插件仓库发起请求...', level='INFO')
-            with opener.open(req, timeout=30) as resp:
-                elapsed = time.time() - startTime
-                status = getattr(resp, 'status', 200)
-                rawData = resp.read()
-                dataLen = len(rawData)
-                log(f'索引数据下载成功! 状态码: {status}, 耗时: {elapsed:.2f}s, 大小: {dataLen} 字节', level='INFO')
-
-                parsedData = json.loads(rawData.decode('utf-8'))
-                plugins = parsedData.get('plugins', {})
-                pluginCount = len(plugins)
-                pluginIds = list(plugins.keys())
-                
-                log(f'仓库索引解析完成，共包含 {pluginCount} 个插件: {pluginIds}', level='SUCCESS')
-                return parsedData
-
-        except json.JSONDecodeError as e:
-            errMsg = f'解析插件仓库 JSON 数据失败 (格式非法): {e}'
-            log(errMsg, level='ERROR')
-            self.lastError = errMsg
-            return None
-        except Exception as e:
-            elapsed = time.time() - startTime
-            errMsg = f'拉取插件仓库索引失败 (用时 {elapsed:.2f}s): {e}'
-            log(errMsg, level='ERROR')
-            self.lastError = errMsg
-            return None
 
     def installPlugin(
         self,

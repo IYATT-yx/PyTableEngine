@@ -22,94 +22,99 @@ VK_RETURN = 0x0D  # 回车键
 class SelectionPickerUI:
     """通用交互区域选取器面板"""
 
-    def __init__(self, appComHandle, logger=None, title="区域选取器", promptTip=None):
-        self._App = appComHandle
-        self._Logger = logger
-        self._Title = title
-        self._PromptTip = promptTip or "快捷操作提示：\n • 在 Excel 选好区域后，按【Enter 回车】快速提取选区\n • 提取完成后，点击确定提交\n • 按【Esc】取消退出"
+    def __init__(self, appComHandle, logger=None, title="区域选取器", promptTip: str|None=None, singleMode=False):
+        self._app = appComHandle
+        self._logger = logger
+        self._title = title
+        self._singleMode = singleMode
+        
+        if promptTip:
+            self._promptTip = promptTip
+        elif self._singleMode:
+            self._promptTip = "快捷操作提示：\n • 在 Excel 选好目标后，按【Enter 回车】提取单元格（新选择将覆盖旧选择）\n • 提取完成后，点击确定提交\n • 按【Esc】取消退出"
+        else:
+            self._promptTip = "快捷操作提示：\n • 在 Excel 选好区域后，按【Enter 回车】快速提取选区\n • 提取完成后，点击确定提交\n • 按【Esc】取消退出"
 
-        self._SelectedTargets = []
-        self._IsConfirmed = False
-        self._IsListening = False
-        self._LastEnterState = False  # 用于防按键抖动
+        self._selectedTargets = []
+        self._isConfirmed = False
+        self._isListening = False
+        self._lastEnterState = False
 
-        # 初始化主窗口
-        self._Root = tk.Tk()
-        self._Root.title(self._Title)
-        self._Root.geometry("460x370")
-        self._Root.attributes("-topmost", True)
-        self._Root.resizable(False, False)
+        self._root = tk.Tk()
+        self._root.title(self._title)
+        self._root.geometry("460x370")
+        self._root.attributes("-topmost", True)
+        self._root.resizable(False, False)
 
-        # 注册子进程退出兜底
-        atexit.register(self._StopListening)
+        atexit.register(self._stopListening)
 
-        self._BuildUi()
-        self._BindEvents()
+        self._buildUi()
+        self._bindEvents()
 
-    def _BuildUi(self):
+    def _buildUi(self):
         """构建 GUI 界面布局"""
         lblTip = ttk.Label(
-            self._Root,
-            text=self._PromptTip,
+            self._root,
+            text=self._promptTip,
             justify="left",
             wraplength=440,
             font=("Microsoft YaHei", 9)
         )
         lblTip.pack(padx=10, pady=8, anchor="w")
 
-        frameList = ttk.Frame(self._Root)
+        frameList = ttk.Frame(self._root)
         frameList.pack(padx=10, pady=2, fill="both", expand=True)
 
-        self._Listbox = tk.Listbox(
+        self._listbox = tk.Listbox(
             frameList,
-            selectmode=tk.EXTENDED,
+            selectmode=tk.SINGLE if self._singleMode else tk.EXTENDED,
             height=9,
             font=("Consolas", 10)
         )
-        self._Listbox.pack(side="left", fill="both", expand=True)
+        self._listbox.pack(side="left", fill="both", expand=True)
 
-        scrollbar = ttk.Scrollbar(frameList, orient="vertical", command=self._Listbox.yview)
+        scrollbar = ttk.Scrollbar(frameList, orient="vertical", command=self._listbox.yview)
         scrollbar.pack(side="right", fill="y")
-        self._Listbox.config(yscrollcommand=scrollbar.set)
+        self._listbox.config(yscrollcommand=scrollbar.set)
 
-        frameListBtns = ttk.Frame(self._Root)
+        frameListBtns = ttk.Frame(self._root)
         frameListBtns.pack(padx=10, pady=6, fill="x")
 
-        btnAdd = ttk.Button(frameListBtns, text="⚡ 提取当前选区 (Enter)", command=self._AddCurrentSelection)
+        btnAdd = ttk.Button(frameListBtns, text="⚡ 提取当前选区 (Enter)", command=self._addCurrentSelection)
         btnAdd.pack(side="left", padx=2)
 
-        btnDel = ttk.Button(frameListBtns, text="🗑️ 移除选中 (Del)", command=self._DeleteSelectedItems)
+        btnDel = ttk.Button(frameListBtns, text="🗑️ 移除选中 (Del)", command=self._deleteSelectedItems)
         btnDel.pack(side="left", padx=2)
 
-        btnClear = ttk.Button(frameListBtns, text="🧹 清空", command=self._ClearAllItems)
+        btnClear = ttk.Button(frameListBtns, text="🧹 清空", command=self._clearAllItems)
         btnClear.pack(side="right", padx=2)
 
-        frameBottom = ttk.Frame(self._Root)
+        frameBottom = ttk.Frame(self._root)
         frameBottom.pack(padx=10, pady=8, fill="x")
 
-        btnConfirm = ttk.Button(frameBottom, text="🚀 确定提交", command=self._OnConfirm)
+        btnConfirm = ttk.Button(frameBottom, text="🚀 确定提交", command=self._onConfirm)
         btnConfirm.pack(side="right", padx=5)
 
-        btnCancel = ttk.Button(frameBottom, text="取消 (Esc)", command=self._OnCancel)
+        btnCancel = ttk.Button(frameBottom, text="取消 (Esc)", command=self._onCancel)
         btnCancel.pack(side="right", padx=5)
 
-    def _BindEvents(self):
+    def _bindEvents(self):
         """绑定快捷键与事件"""
-        self._Root.bind("<Escape>", lambda e: self._OnCancel())
-        self._Listbox.bind("<Delete>", lambda e: self._DeleteSelectedItems())
+        self._root.bind("<Escape>", lambda e: self._onCancel())
+        self._listbox.bind("<Delete>", lambda e: self._deleteSelectedItems())
 
-    def _StartListening(self):
+    def _startListening(self):
         """启动安全轮询检测"""
         self._IsListening = True
-        self._PollEnterKey()
+        self._pollEnterKey()
 
-    def _StopListening(self):
+    def _stopListening(self):
         """停止轮询检测"""
         self._IsListening = False
 
-    def _PollEnterKey(self):
+    def _pollEnterKey(self):
         """主线程安全：利用 GetAsyncKeyState 进行精准按键检测"""
-        if not self._IsListening or not self._Root:
+        if not self._IsListening or not self._root:
             return
 
         try:
@@ -118,95 +123,103 @@ class SelectionPickerUI:
 
             # 边沿触发检测：按下 Enter 瞬间触发一次提取
             if isPressed and not self._LastEnterState:
-                self._AddCurrentSelection()
+                self._addCurrentSelection()
 
             self._LastEnterState = isPressed
 
         except Exception as e:
-            if self._Logger:
-                self._Logger.error(f"按键检测发生异常: {e}")
+            if self._logger:
+                self._logger.error(f"按键检测发生异常: {e}")
 
-        if self._IsListening and self._Root:
-            self._Root.after(30, self._PollEnterKey)
+        if self._IsListening and self._root:
+            self._root.after(30, self._pollEnterKey)
 
-    def _AddCurrentSelection(self):
+    def _addCurrentSelection(self):
         """安全提取 Excel 当前 Selection 区域，并重置焦点到左上角单元格"""
         try:
-            sel = self._App.Selection
+            sel = self._app.Selection
             if not sel:
                 return
+
+            # 开启单选模式时强制只取左上角单个单元格
+            if self._singleMode:
+                sel = sel.Cells(1, 1)
 
             sheetName = sel.Worksheet.Name
             address = sel.Address
             displayStr = f"Sheet: {sheetName} | Range: {address}"
 
-            # 防重复插入列表
-            for sName, aStr, _ in self._SelectedTargets:
-                if sName == sheetName and aStr == address:
-                    return
+            # 开启单选模式时覆盖原有选择，多选模式时防重复插入
+            if self._singleMode:
+                self._selectedTargets.clear()
+                self._listbox.delete(0, tk.END)
+            else:
+                for sName, aStr, _ in self._selectedTargets:
+                    if sName == sheetName and aStr == address:
+                        return
 
             # 1. 存入已选列表
-            self._SelectedTargets.append((sheetName, address, sel))
-            self._Listbox.insert(tk.END, displayStr)
-            self._Listbox.see(tk.END)
+            self._selectedTargets.append((sheetName, address, sel))
+            self._listbox.insert(tk.END, displayStr)
+            self._listbox.see(tk.END)
 
-            # 2. 核心：取消大面积框选，定位到左上角第1格，保住视野焦点不飘移
+            # 2. 取消大面积框选，定位到左上角第1格
             sel.Cells(1, 1).Select()
 
         except Exception as e:
-            if self._Logger:
-                self._Logger.error(f"提取选区发生异常: {e}")
+            if self._logger:
+                self._logger.error(f"提取选区发生异常: {e}")
 
-    def _DeleteSelectedItems(self):
+    def _deleteSelectedItems(self):
         """删除 Listbox 选中项"""
-        selectedIndices = list(self._Listbox.curselection())
+        selectedIndices = list(self._listbox.curselection())
         if not selectedIndices:
             return
 
         for index in reversed(selectedIndices):
-            self._Listbox.delete(index)
-            self._SelectedTargets.pop(index)
+            self._listbox.delete(index)
+            self._selectedTargets.pop(index)
 
-    def _ClearAllItems(self):
+    def _clearAllItems(self):
         """清空暂存列表"""
-        self._Listbox.delete(0, tk.END)
-        self._SelectedTargets.clear()
+        self._listbox.delete(0, tk.END)
+        self._selectedTargets.clear()
 
-    def _OnConfirm(self):
+    def _onConfirm(self):
         """确认提交"""
-        if not self._SelectedTargets:
-            self._AddCurrentSelection()
-            if not self._SelectedTargets:
-                messagebox.showwarning("提示", "请先在 Excel 中选择有效区域并提取！", parent=self._Root)
+        if not self._selectedTargets:
+            self._addCurrentSelection()
+            if not self._selectedTargets:
+                messagebox.showwarning("提示", "请先在 Excel 中选择有效区域并提取！", parent=self._root)
                 return
 
         self._IsConfirmed = True
-        self._CloseWindow()
+        self._closeWindow()
 
-    def _OnCancel(self):
+    def _onCancel(self):
         """取消操作"""
         self._IsConfirmed = False
-        self._CloseWindow()
+        self._closeWindow()
 
-    def _CloseWindow(self):
+    def _closeWindow(self):
         """正常关闭窗口并收尾"""
-        self._StopListening()
+        self._stopListening()
         try:
-            self._Root.destroy()
+            self._root.destroy()
         except Exception:
             pass
 
     def show(self):
         """显示面板"""
         try:
-            self._StartListening()
-            self._Root.protocol("WM_DELETE_WINDOW", self._OnCancel)
-            self._Root.mainloop()
+            self._startListening()
+            self._root.protocol("WM_DELETE_WINDOW", self._onCancel)
+            self._root.mainloop()
         except Exception as e:
-            if self._Logger:
-                self._Logger.error(f"选取器运行中发生未捕获异常: {e}")
+            if self._logger:
+                self._logger.error(f"选取器运行中发生未捕获异常: {e}")
             raise e
         finally:
-            self._StopListening()
+            self._stopListening()
 
-        return self._IsConfirmed, self._SelectedTargets
+        return self._IsConfirmed, self._selectedTargets

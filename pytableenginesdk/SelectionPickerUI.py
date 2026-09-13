@@ -39,6 +39,7 @@ class SelectionPickerUI:
         self._isConfirmed = False
         self._isListening = False
         self._lastEnterState = False
+        self._afterId = None
 
         self._root = tk.Tk()
         self._root.title(self._title)
@@ -105,34 +106,54 @@ class SelectionPickerUI:
 
     def _startListening(self):
         """启动安全轮询检测"""
-        self._IsListening = True
+        self._isListening = True
         self._pollEnterKey()
 
     def _stopListening(self):
-        """停止轮询检测"""
-        self._IsListening = False
+        """停止轮询检测并注销定时器"""
+        self._isListening = False
+        if self._afterId and self._root:
+            try:
+                self._root.after_cancel(self._afterId)
+            except Exception:
+                pass
+            self._afterId = None
 
     def _pollEnterKey(self):
         """主线程安全：利用 GetAsyncKeyState 进行精准按键检测"""
-        if not self._IsListening or not self._root:
+        if not self._isListening:
             return
 
         try:
+            # 增加窗口存活校验
+            if not self._root or not self._root.winfo_exists():
+                self._isListening = False
+                return
+
             state = GetAsyncKeyState(VK_RETURN)
             isPressed = bool(state & 0x8000)
 
             # 边沿触发检测：按下 Enter 瞬间触发一次提取
-            if isPressed and not self._LastEnterState:
+            if isPressed and not self._lastEnterState:
                 self._addCurrentSelection()
 
-            self._LastEnterState = isPressed
+            self._lastEnterState = isPressed
 
         except Exception as e:
+            # 捕获 Tkinter 实例已销毁引发的 TclError 异常
+            if isinstance(e, tk.TclError):
+                self._isListening = False
+                return
             if self._logger:
                 self._logger.error(f"按键检测发生异常: {e}")
 
-        if self._IsListening and self._root:
-            self._root.after(30, self._pollEnterKey)
+        # 重新注册下一个周期的定时器并保存句柄
+        if self._isListening and self._root:
+            try:
+                if self._root.winfo_exists():
+                    self._afterId = self._root.after(30, self._pollEnterKey)
+            except tk.TclError:
+                self._isListening = False
 
     def _addCurrentSelection(self):
         """安全提取 Excel 当前 Selection 区域，并重置焦点到左上角单元格"""

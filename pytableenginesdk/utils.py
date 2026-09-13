@@ -89,7 +89,16 @@ def batchCombineRanges(appComHandle: Any, ranges: List[Any], batchSize: int = 50
             combinedRng = appComHandle.Union(combinedRng, r)
         yield combinedRng
 
-def runWithSelection(appComHandle: Any, logQueue: multiprocessing.Queue[str], pluginInfo: dict[str, str], pickerTitle: str, actionFunc: Callable[[Any, List[Tuple[str, str, Any]], PluginLogger], None], disableEvents: bool = False, manualCalc: bool = False ) -> None:
+def runWithSelection(
+        appComHandle: Any,
+        logQueue: multiprocessing.Queue[str],
+        pluginInfo: dict[str, str],
+        pickerTitle: str,
+        actionFunc: Callable[[Any, List[Tuple[str, str, Any]], PluginLogger], None],
+        disableEvents: bool = False,
+        manualCalc: bool = False,
+        singleMode: bool = False
+) -> None:
     """
     包含区域选取 UI 与 COM 环境保护的标准插件执行封装函数。
 
@@ -101,6 +110,7 @@ def runWithSelection(appComHandle: Any, logQueue: multiprocessing.Queue[str], pl
         actionFunc (Callable): 核心业务回调函数，签名为 actionFunc(appComHandle, targets, logger)。
         disableEvents (bool): 是否在执行期间禁用事件（默认 False）。
         manualCalc (bool): 是否在执行期间开启手动重算（默认 False）。
+        singleMode (bool): 是否启用单选模式（默认 False）。
     """
     logger = PluginLogger(logQueue, pluginInfo)
     logger.info(f"开始执行【{pluginInfo.get('name', '插件')}】...")
@@ -109,7 +119,7 @@ def runWithSelection(appComHandle: Any, logQueue: multiprocessing.Queue[str], pl
         logger.warning('当前没有打开的工作簿。')
         return
 
-    picker = SelectionPickerUI(appComHandle, logger, title=pickerTitle)
+    picker = SelectionPickerUI(appComHandle, logger, title=pickerTitle, singleMode=singleMode)
     confirmed, targets = picker.show()
 
     if not confirmed or not targets:
@@ -119,6 +129,68 @@ def runWithSelection(appComHandle: Any, logQueue: multiprocessing.Queue[str], pl
     try:
         with comEnvironment(appComHandle, disableEvents=disableEvents, manualCalc=manualCalc):
             actionFunc(appComHandle, targets, logger)
+    except Exception as e:
+        logger.error(f'插件处理过程出现异常: {e}')
+        raise e
+
+def runWithDualSelection(
+    appComHandle: Any,
+    logQueue: multiprocessing.Queue[str],
+    pluginInfo: dict[str, str],
+    firstPickerTitle: str = "步骤 1/2：选择源区域",
+    secondPickerTitle: str = "步骤 2/2：选择目标位置",
+    actionFunc: Callable[[Any, List[Tuple[str, str, Any]], List[Tuple[str, str, Any]], PluginLogger], None] = None,
+    disableEvents: bool = False,
+    manualCalc: bool = False,
+    firstSingleMode: bool = False,
+    secondSingleMode: bool = True
+) -> None:
+    """
+    针对需要分两步选区的 COM 插件通用封装函数。
+
+    Args:
+        appComHandle (Any): Excel COM 句柄。
+        logQueue (Any): 日志队列句柄。
+        pluginInfo (dict): 插件元信息字典。
+        firstPickerTitle (str): 第一阶段选区弹窗标题。
+        secondPickerTitle (str): 第二阶段选区弹窗标题。
+        actionFunc (Callable): 核心业务函数，签名为 actionFunc(app, sourceTargets, destTargets, logger)。
+        disableEvents (bool): 运行期间是否禁用事件。
+        manualCalc (bool): 运行期间是否开启手动计算。
+        firstSingleMode (bool): 第一阶段是否单选模式。
+        secondSingleMode (bool): 第二阶段是否单选模式（目标位置通常为 True）。
+    """
+    logger = PluginLogger(logQueue, pluginInfo)
+    logger.info(f"开始执行【{pluginInfo.get('name', '插件')}】...")
+
+    if appComHandle.Workbooks.Count == 0:
+        logger.warning('当前没有打开的工作簿。')
+        return
+
+    # 第一阶段选区
+    picker1 = SelectionPickerUI(
+        appComHandle, logger, title=firstPickerTitle, singleMode=firstSingleMode
+    )
+    confirmed1, targets1 = picker1.show()
+
+    if not confirmed1 or not targets1:
+        logger.info('用户取消了第一阶段选取操作，插件退出。')
+        return
+
+    # 第二阶段选区
+    picker2 = SelectionPickerUI(
+        appComHandle, logger, title=secondPickerTitle, singleMode=secondSingleMode
+    )
+    confirmed2, targets2 = picker2.show()
+
+    if not confirmed2 or not targets2:
+        logger.info('用户取消了第二阶段选取操作，插件退出。')
+        return
+
+    # 保护环境并执行业务
+    try:
+        with comEnvironment(appComHandle, disableEvents=disableEvents, manualCalc=manualCalc):
+            actionFunc(appComHandle, targets1, targets2, logger)
     except Exception as e:
         logger.error(f'插件处理过程出现异常: {e}')
         raise e

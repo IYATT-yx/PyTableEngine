@@ -31,7 +31,7 @@ nuitka --standalone `
 --copyright="Copyright (C) 2026 IYATT-yx. All Rights Reserved." `
 --windows-icon-from-ico=.\icon.ico `
 --include-data-file=.\icon.ico=.\ `
---include-data-files=.\extensions\IYATT_DemoPlugin\*=extensions/IYATT_DemoPlugin/ `
+--include-data-files=.\extensions\README.md=extensions/ `
 --include-data-files=.\pytableenginesdk\*=pytableenginesdk/ `
 --noinclude-data-files="*__pycache__*/*" `
 --noinclude-data-files="*.pyc" `

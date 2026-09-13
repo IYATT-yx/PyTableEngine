@@ -6,6 +6,6 @@ __pycache__/
 nuitka-crash-report.xml
 config.ini
 extensions/*
-!extensions/IYATT_DemoPlugin/
+!extensions/README.md
 vendor/
 cache/

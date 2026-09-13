@@ -27,6 +27,12 @@ class SelectionPickerUI:
         self._logger = logger
         self._title = title
         self._singleMode = singleMode
+
+        self._origMoveAfterReturn = True
+        try:
+            self._origMoveAfterReturn = self._app.MoveAfterReturn
+        except Exception:
+            pass
         
         if promptTip:
             self._promptTip = promptTip
@@ -105,13 +111,22 @@ class SelectionPickerUI:
         self._listbox.bind("<Delete>", lambda e: self._deleteSelectedItems())
 
     def _startListening(self):
-        """启动安全轮询检测"""
+        """启动安全轮询检测，并临时禁用 Enter 下移"""
         self._isListening = True
+        try:
+            self._app.MoveAfterReturn = False  # 禁用 Enter 跳转
+        except Exception:
+            pass
         self._pollEnterKey()
-
+        
     def _stopListening(self):
-        """停止轮询检测并注销定时器"""
+        """停止轮询检测并恢复 Excel 默认属性"""
         self._isListening = False
+        try:
+            self._app.MoveAfterReturn = self._origMoveAfterReturn  # 恢复 Enter 跳转
+        except Exception:
+            pass
+
         if self._afterId and self._root:
             try:
                 self._root.after_cancel(self._afterId)

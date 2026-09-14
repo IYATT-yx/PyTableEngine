@@ -132,8 +132,9 @@ class Dependency:
                 tmp.write('\n'.join(missingOrOutdatedReqs))
                 tmpReqPath = tmp.name
 
+            pythonPath = constants.Path.pythonEmbed if constants.Path.isPackaged else sys.executable
             cmd = [
-                sys.executable,
+                pythonPath,
                 '-m',
                 'pip',
                 'install',

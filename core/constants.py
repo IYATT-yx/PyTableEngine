@@ -17,6 +17,9 @@ class Path:
     extensions = os.path.join(appDir, 'extensions')
     cache = os.path.join(appDir, 'cache')
     repositoryIndexFile = os.path.join(cache, 'index.json')
+    pythonEmbedDir = os.path.join(appDir, 'runtime')
+    pythonEmbed = os.path.join(pythonEmbedDir, 'python.exe')
+    
 
 class Command:
     argv0 = os.path.abspath(sys.argv[0])

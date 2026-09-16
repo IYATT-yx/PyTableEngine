@@ -509,9 +509,14 @@ class MainWindow:
         self.reloadSettingsBtn = ttk.Button(btnFrame, text='撤销更改 (重新读取)', command=self.reloadSettings)
         self.reloadSettingsBtn.pack(side=tk.LEFT, padx=5)
 
+        # ---------------------------------------------------
         # 底部运行日志栏
-        bottomFrame = ttk.LabelFrame(self.root, text=' 运行日志 ', padding=5)
+        # 修改标题，提示用户可以双击
+        bottomFrame = ttk.LabelFrame(self.root, text=' 运行日志 (双击我打开日志文件) ', padding=5)
         bottomFrame.pack(fill=tk.X, padx=10, pady=5)
+
+        # 为组框绑定左键双击事件 '<Double-1>'
+        bottomFrame.bind('<Double-1>', lambda event: self.openLogFile())
 
         self.logText = tk.Text(bottomFrame, height=6, state=tk.DISABLED, wrap=tk.WORD)
         logScroll = ttk.Scrollbar(bottomFrame, orient=tk.VERTICAL, command=self.logText.yview)
@@ -524,6 +529,20 @@ class MainWindow:
         self.logText.tag_config('WARNING', foreground='#d97706')
         self.logText.tag_config('ERROR', foreground='#dc2626')
         self.logText.tag_config('SUCCESS', foreground='#16a34a')
+
+    def openLogFile(self):
+        '''一键打开本地日志文件'''
+        log_path = constants.Path.log
+        
+        if not os.path.exists(log_path):
+            messagebox.showwarning("提示", "当前还没有生成日志文件。", parent=self.root)
+            return
+            
+        try:
+            os.startfile(log_path)
+        except Exception as e:
+            self.appendLog(f"无法打开日志文件: {e}", level='ERROR')
+            messagebox.showerror("错误", f"无法打开日志文件:\n{e}", parent=self.root)
 
     def saveSettings(self):
         '''将 UI 中的设置保存到 config.py 并持久化'''

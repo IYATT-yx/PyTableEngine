@@ -356,6 +356,11 @@ class MainWindow:
         )
         self.searchEntry.pack(side=tk.LEFT, padx=5)
 
+        self.killBtn = ttk.Button(
+            searchFrame, text='清理残留进程', command=self.killGhostProcesses
+        )
+        self.killBtn.pack(side=tk.RIGHT, padx=5)
+
         self.toggleBtn = ttk.Button(
             searchFrame, text='切换启用/禁用', command=self.togglePluginState
         )
@@ -541,6 +546,62 @@ class MainWindow:
         self.logText.tag_config('WARNING', foreground='#d97706')
         self.logText.tag_config('ERROR', foreground='#dc2626')
         self.logText.tag_config('SUCCESS', foreground='#16a34a')
+
+    def killGhostProcesses(self):
+        '''一键清理残留的表格后台进程（带安全提示）'''
+        # 1. 根据当前选择，判断要清理的目标进程
+        currentSelection = self.comCombo.get()
+        if "Excel" in currentSelection:
+            targetExe = "excel.exe"
+            appName = "Microsoft Excel"
+        elif "WPS" in currentSelection:
+            targetExe = "et.exe"  # WPS 表格的主进程
+            appName = "WPS 表格"
+        else:
+            targetExe = "excel.exe"
+            appName = "表格程序"
+
+        # 2. 弹出严重警告对话框，防止误杀
+        warningMsg = (
+            f"警告：此操作将强制结束所有正在运行的 {appName} 进程！\n\n"
+            "如果你当前有正在编辑且【未保存】的表格，数据将会永久丢失。\n"
+            "仅建议在“幽灵进程”导致无法连接时使用。\n\n"
+            f"是否确定要强制结束所有 {appName} 进程？"
+        )
+        
+        # parent=self.root 确保弹窗在主界面正中央
+        if not messagebox.askyesno("清理进程确认", warningMsg, icon='warning', parent=self.root):
+            self.appendLog("已取消清理进程操作。", level='INFO')
+            return
+
+        # 3. 静默执行 taskkill 强制结束命令
+        try:
+            # 设置 CREATE_NO_WINDOW 标志，防止在 Windows 上闪过黑色的 CMD 窗口
+            creationFlags = 0
+            if sys.platform == "win32":
+                creationFlags = subprocess.CREATE_NO_WINDOW
+                
+            # /F: 强制结束, /IM: 指定映像名称, /T: 结束进程树（连带子进程一起杀）
+            result = subprocess.run(
+                ['taskkill', '/F', '/IM', targetExe, '/T'],
+                capture_output=True,
+                creationflags=creationFlags
+            )
+
+            # returncode == 0 表示成功杀死进程；128 表示未找到该进程
+            if result.returncode == 0:
+                self.appendLog(f"已强制清理所有残留的 {appName} ({targetExe}) 进程。", level='SUCCESS')
+                messagebox.showinfo("清理完成", f"已成功强制结束所有 {appName} 进程。\n\n请重新打开你的表格文件，然后再点击【测试/连接 COM】。", parent=self.root)
+            elif result.returncode == 128:
+                self.appendLog(f"未发现正在运行的 {targetExe} 进程。", level='INFO')
+                messagebox.showinfo("无需清理", f"当前系统后台没有正在运行的 {appName} 进程。", parent=self.root)
+            else:
+                self.appendLog(f"清理进程时发生异常状态码: {result.returncode}", level='WARNING')
+                messagebox.showwarning("提示", "执行清理命令完成，但遇到未知状态，请手动打开任务管理器确认。", parent=self.root)
+
+        except Exception as e:
+            self.appendLog(f"执行进程清理命令失败: {e}", level='ERROR')
+            messagebox.showerror("错误", f"无法执行清理命令:\n{e}", parent=self.root)
 
     def toggleTopmost(self):
         '''切换主窗口置顶状态'''

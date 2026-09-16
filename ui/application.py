@@ -359,6 +359,11 @@ class MainWindow:
         )
         self.restartBtn.pack(side=tk.RIGHT, padx=5)
 
+        self.openExtDirBtn = ttk.Button(
+            searchFrame, text='打开插件目录', command=self.openExtensionsDir
+        )
+        self.openExtDirBtn.pack(side=tk.RIGHT, padx=5)
+
         self.refreshBtn = ttk.Button(
             searchFrame, text='重新扫描', command=self.refreshPluginsAndDependencies
         )
@@ -530,16 +535,28 @@ class MainWindow:
         self.logText.tag_config('ERROR', foreground='#dc2626')
         self.logText.tag_config('SUCCESS', foreground='#16a34a')
 
+    def openExtensionsDir(self):
+        '''一键打开本地插件所在的文件夹'''
+        extPath = constants.Path.extensions
+        
+        os.makedirs(extPath, exist_ok=True)
+            
+        try:
+            os.startfile(extPath)
+        except Exception as e:
+            self.appendLog(f"无法打开插件目录: {e}", level='ERROR')
+            messagebox.showerror("错误", f"无法打开插件目录:\n{e}", parent=self.root)
+
     def openLogFile(self):
         '''一键打开本地日志文件'''
-        log_path = constants.Path.log
+        logPath = constants.Path.log
         
-        if not os.path.exists(log_path):
+        if not os.path.exists(logPath):
             messagebox.showwarning("提示", "当前还没有生成日志文件。", parent=self.root)
             return
             
         try:
-            os.startfile(log_path)
+            os.startfile(logPath)
         except Exception as e:
             self.appendLog(f"无法打开日志文件: {e}", level='ERROR')
             messagebox.showerror("错误", f"无法打开日志文件:\n{e}", parent=self.root)

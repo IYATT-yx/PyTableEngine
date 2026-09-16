@@ -330,6 +330,13 @@ class MainWindow:
         )
         self.comStatusLabel.pack(side=tk.LEFT, padx=10)
 
+        # 窗口置顶复选框 (靠右对齐)
+        self.topmostVar = tk.BooleanVar(value=False)
+        self.topmostCheck = ttk.Checkbutton(
+            topFrame, text='窗口置顶', variable=self.topmostVar, command=self.toggleTopmost
+        )
+        self.topmostCheck.pack(side=tk.RIGHT, padx=5)
+
         # 标签页容器
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -534,6 +541,14 @@ class MainWindow:
         self.logText.tag_config('WARNING', foreground='#d97706')
         self.logText.tag_config('ERROR', foreground='#dc2626')
         self.logText.tag_config('SUCCESS', foreground='#16a34a')
+
+    def toggleTopmost(self):
+        '''切换主窗口置顶状态'''
+        isTopmost = self.topmostVar.get()
+        self.root.attributes('-topmost', isTopmost)
+        
+        stateStr = "已开启" if isTopmost else "已关闭"
+        self.appendLog(f"窗口置顶{stateStr}。", level='INFO')
 
     def openExtensionsDir(self):
         '''一键打开本地插件所在的文件夹'''

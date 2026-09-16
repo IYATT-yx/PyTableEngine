@@ -82,7 +82,6 @@ Plugins can be manually distributed by copying them to the `extensions` director
 
 ### 在线插件 / Online Plugins
 
-软件首次启动会创建`config.ini`，在 `[market]` 下 `repo_index =` 后可填写索引地址，默认不填写时为 GitHub 插件中心仓库索引。  
 GitHub 插件中心仓库索引：  
 ```text
 https://raw.githubusercontent.com/IYATT-yx/PyTableEnginePluginRepository/main/index.json
@@ -97,7 +96,6 @@ https://gitee.com/iyatt/PyTableEnginePluginRepository/raw/main/index.json
 
 ---
 
-The software creates `config.ini` upon its first startup. The index address can be filled in under `[market]` with `repo_index =` after the default value is not filled in.  
 GitHub Plugin Center Repository Index:  
 ```text
 https://raw.githubusercontent.com/IYATT-yx/PyTableEnginePluginRepository/main/index.json

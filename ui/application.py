@@ -469,6 +469,46 @@ class MainWindow:
 
         self.marketTree.bind('<Double-1>', lambda event: self.installSelectedMarketPlugin())
 
+        # === 选项卡 3: 设置 ===
+        settingsTab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(settingsTab, text=' 设置中心 ')
+
+        # --- Pip 设置组 ---
+        pipFrame = ttk.LabelFrame(settingsTab, text=' Pip 环境配置 ', padding=10)
+        pipFrame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(pipFrame, text='PyPi 镜像源:').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        self.pipPypiVar = tk.StringVar(value=self.config.getCleanOption('pip', 'pypi') or '')
+        ttk.Entry(pipFrame, textvariable=self.pipPypiVar, width=80).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(pipFrame, text='(留空则使用默认官方索引)').grid(row=0, column=2, padx=5, pady=5, sticky='w')
+
+        ttk.Label(pipFrame, text='Pip 代理地址:').grid(row=1, column=0, padx=5, pady=5, sticky='e')
+        self.pipProxyVar = tk.StringVar(value=self.config.getCleanOption('pip', 'proxy') or '')
+        ttk.Entry(pipFrame, textvariable=self.pipProxyVar, width=80).grid(row=1, column=1, padx=5, pady=5)
+
+        # --- 市场设置组 ---
+        marketFrame = ttk.LabelFrame(settingsTab, text=' 插件市场配置 ', padding=10)
+        marketFrame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(marketFrame, text='市场索引地址:').grid(row=0, column=0, padx=5, pady=5, sticky='e')
+        self.marketIndexVar = tk.StringVar(value=self.config.getCleanOption('market', 'repo_index') or '')
+        ttk.Entry(marketFrame, textvariable=self.marketIndexVar, width=80).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(marketFrame, text='(留空则使用默认官方索引)').grid(row=0, column=2, padx=5, pady=5, sticky='w')
+
+        ttk.Label(marketFrame, text='市场网络代理:').grid(row=1, column=0, padx=5, pady=5, sticky='e')
+        self.marketProxyVar = tk.StringVar(value=self.config.getCleanOption('market', 'proxy') or '')
+        ttk.Entry(marketFrame, textvariable=self.marketProxyVar, width=80).grid(row=1, column=1, padx=5, pady=5)
+
+        # --- 按钮操作区 ---
+        btnFrame = ttk.Frame(settingsTab, padding=5)
+        btnFrame.pack(fill=tk.X, pady=10)
+
+        self.saveSettingsBtn = ttk.Button(btnFrame, text='保存配置', command=self.saveSettings)
+        self.saveSettingsBtn.pack(side=tk.LEFT, padx=5)
+
+        self.reloadSettingsBtn = ttk.Button(btnFrame, text='撤销更改 (重新读取)', command=self.reloadSettings)
+        self.reloadSettingsBtn.pack(side=tk.LEFT, padx=5)
+
         # 底部运行日志栏
         bottomFrame = ttk.LabelFrame(self.root, text=' 运行日志 ', padding=5)
         bottomFrame.pack(fill=tk.X, padx=10, pady=5)
@@ -484,6 +524,48 @@ class MainWindow:
         self.logText.tag_config('WARNING', foreground='#d97706')
         self.logText.tag_config('ERROR', foreground='#dc2626')
         self.logText.tag_config('SUCCESS', foreground='#16a34a')
+
+    def saveSettings(self):
+        '''将 UI 中的设置保存到 config.py 并持久化'''
+        try:
+            # 确保 config 对象中存在对应的 section
+            if not self.config.config.has_section('pip'):
+                self.config.config.add_section('pip')
+            if not self.config.config.has_section('market'):
+                self.config.config.add_section('market')
+
+            # 更新配置值 (去除首尾多余空格)
+            self.config.config['pip']['pypi'] = self.pipPypiVar.get().strip()
+            self.config.config['pip']['proxy'] = self.pipProxyVar.get().strip()
+            self.config.config['market']['repo_index'] = self.marketIndexVar.get().strip()
+            self.config.config['market']['proxy'] = self.marketProxyVar.get().strip()
+
+            # 调用 Config 的持久化保存
+            self.config.save()
+            
+            # 日志与提示
+            self.appendLog("系统设置已成功更新并保存。")
+            messagebox.showinfo("保存成功", "设置已成功生效！", parent=self.root)
+            
+        except Exception as e:
+            self.logger.error(f"保存设置失败: {e}")
+            messagebox.showerror("保存失败", f"无法保存设置，错误信息:\n{str(e)}", parent=self.root)
+
+    def reloadSettings(self):
+        '''从配置文件重新加载数据，并更新 UI'''
+        try:
+            self.config.loadConfig()
+            
+            # 刷新 UI 变量
+            self.pipPypiVar.set(self.config.getCleanOption('pip', 'pypi') or '')
+            self.pipProxyVar.set(self.config.getCleanOption('pip', 'proxy') or '')
+            self.marketIndexVar.set(self.config.getCleanOption('market', 'repo_index') or '')
+            self.marketProxyVar.set(self.config.getCleanOption('market', 'proxy') or '')
+            
+            self.appendLog("设置页面数据已从配置文件重载。")
+            
+        except Exception as e:
+            self.logger.error(f"重载设置失败: {e}")
 
     def showIndexPlugins(self) -> bool:
         '''显示插件市场数据'''

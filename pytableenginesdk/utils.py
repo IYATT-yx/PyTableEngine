@@ -6,7 +6,7 @@ copyright:  Copyright (c) 2026 IYATT-yx.
             Licensed under the MIT License. See LICENSE file in the project root for full license information.
 """
 import contextlib
-from typing import Callable, Iterable, List, Tuple, Any
+from typing import Callable, Iterable, List, Tuple, Any, Union
 import multiprocessing
 
 from pytableenginesdk.PluginLogger import PluginLogger
@@ -88,29 +88,24 @@ def batchCombineRanges(appComHandle: Any, ranges: List[Any], batchSize: int = 50
         for r in batch[1:]:
             combinedRng = appComHandle.Union(combinedRng, r)
         yield combinedRng
-
 def runWithSelection(
         appComHandle: Any,
-        logQueue: multiprocessing.Queue[str],
+        logQueue: 'multiprocessing.Queue[str]',
         pluginInfo: dict[str, str],
         pickerTitle: str,
         actionFunc: Callable[[Any, List[Tuple[str, str, Any]], PluginLogger], None],
         disableEvents: bool = False,
         manualCalc: bool = False,
-        singleMode: bool = False
+        singleMode: bool = False,
+        validator: Callable[[List[Tuple[str, str, Any]]], Union[bool, str]]|None = None  # <-- 新增校验函数参数
 ) -> None:
     """
     包含区域选取 UI 与 COM 环境保护的标准插件执行封装函数。
 
     Args:
-        appComHandle (Any): Excel/WPS COM 句柄。
-        logQueue (Any): 日志队列句柄。
-        pluginInfo (dict): 插件元信息字典。
-        pickerTitle (str): 选区弹窗标题。
-        actionFunc (Callable): 核心业务回调函数，签名为 actionFunc(appComHandle, targets, logger)。
-        disableEvents (bool): 是否在执行期间禁用事件（默认 False）。
-        manualCalc (bool): 是否在执行期间开启手动重算（默认 False）。
+        ...
         singleMode (bool): 是否启用单选模式（默认 False）。
+        validator (Callable): 可选的校验函数，签名为 validator(targets) -> bool or str。
     """
     logger = PluginLogger(logQueue, pluginInfo)
     logger.info(f"开始执行【{pluginInfo.get('name', '插件')}】...")
@@ -119,7 +114,14 @@ def runWithSelection(
         logger.warning('当前没有打开的工作簿。')
         return
 
-    picker = SelectionPickerUI(appComHandle, logger, title=pickerTitle, singleMode=singleMode)
+    # 将 validator 透传给 SelectionPickerUI
+    picker = SelectionPickerUI(
+        appComHandle, 
+        logger, 
+        title=pickerTitle, 
+        singleMode=singleMode, 
+        validator=validator  # <-- 传入
+    )
     confirmed, targets = picker.show()
 
     if not confirmed or not targets:
@@ -133,32 +135,30 @@ def runWithSelection(
         logger.error(f'插件处理过程出现异常: {e}')
         raise e
 
+
 def runWithDualSelection(
     appComHandle: Any,
-    logQueue: multiprocessing.Queue[str],
+    logQueue: 'multiprocessing.Queue[str]',
     pluginInfo: dict[str, str],
+    actionFunc: Callable[[Any, List[Tuple[str, str, Any]], List[Tuple[str, str, Any]], PluginLogger], None],
     firstPickerTitle: str = "步骤 1/2：选择源区域",
     secondPickerTitle: str = "步骤 2/2：选择目标位置",
-    actionFunc: Callable[[Any, List[Tuple[str, str, Any]], List[Tuple[str, str, Any]], PluginLogger], None] = None,
     disableEvents: bool = False,
     manualCalc: bool = False,
     firstSingleMode: bool = False,
-    secondSingleMode: bool = True
+    secondSingleMode: bool = True,
+    firstValidator: Callable[[List[Tuple[str, str, Any]]], Union[bool, str]]|None = None,
+    secondValidator: Callable[[List[Tuple[str, str, Any]]], Union[bool, str]]|None = None
 ) -> None:
     """
     针对需要分两步选区的 COM 插件通用封装函数。
 
     Args:
-        appComHandle (Any): Excel COM 句柄。
-        logQueue (Any): 日志队列句柄。
-        pluginInfo (dict): 插件元信息字典。
-        firstPickerTitle (str): 第一阶段选区弹窗标题。
-        secondPickerTitle (str): 第二阶段选区弹窗标题。
-        actionFunc (Callable): 核心业务函数，签名为 actionFunc(app, sourceTargets, destTargets, logger)。
-        disableEvents (bool): 运行期间是否禁用事件。
-        manualCalc (bool): 运行期间是否开启手动计算。
+        ...
         firstSingleMode (bool): 第一阶段是否单选模式。
         secondSingleMode (bool): 第二阶段是否单选模式（目标位置通常为 True）。
+        firstValidator (Callable): 第一阶段选区校验函数。
+        secondValidator (Callable): 第二阶段选区校验函数。
     """
     logger = PluginLogger(logQueue, pluginInfo)
     logger.info(f"开始执行【{pluginInfo.get('name', '插件')}】...")
@@ -169,7 +169,11 @@ def runWithDualSelection(
 
     # 第一阶段选区
     picker1 = SelectionPickerUI(
-        appComHandle, logger, title=firstPickerTitle, singleMode=firstSingleMode
+        appComHandle, 
+        logger, 
+        title=firstPickerTitle, 
+        singleMode=firstSingleMode,
+        validator=firstValidator  # <-- 传入第一阶段校验
     )
     confirmed1, targets1 = picker1.show()
 
@@ -179,7 +183,11 @@ def runWithDualSelection(
 
     # 第二阶段选区
     picker2 = SelectionPickerUI(
-        appComHandle, logger, title=secondPickerTitle, singleMode=secondSingleMode
+        appComHandle, 
+        logger, 
+        title=secondPickerTitle, 
+        singleMode=secondSingleMode,
+        validator=secondValidator # <-- 传入第二阶段校验
     )
     confirmed2, targets2 = picker2.show()
 

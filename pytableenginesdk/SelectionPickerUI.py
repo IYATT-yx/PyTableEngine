@@ -10,6 +10,7 @@ import ctypes
 from ctypes import wintypes
 import tkinter as tk
 from tkinter import messagebox, ttk
+from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 user32 = ctypes.windll.user32
 GetAsyncKeyState = user32.GetAsyncKeyState
@@ -22,11 +23,33 @@ VK_RETURN = 0x0D  # 回车键
 class SelectionPickerUI:
     """通用交互区域选取器面板"""
 
-    def __init__(self, appComHandle, logger=None, title="区域选取器", promptTip: str|None=None, singleMode=False):
+    def __init__(
+            self, 
+            appComHandle: Any, 
+            logger: Optional[Any] = None, 
+            title: str = "区域选取器", 
+            promptTip: Optional[str] = None, 
+            singleMode: bool = False, 
+            validator: Optional[Callable[[List[Tuple[str, str, Any]]], Union[bool, str]]]|None = None
+        ) -> None:
+        """
+        初始化区域选取器 UI。
+        
+        Args:
+            appComHandle (Any): Excel/WPS 的 COM 句柄。
+            logger (Optional[Any]): 日志记录器实例，默认为 None。
+            title (str): 弹窗的标题文本，默认为 "区域选取器"。
+            promptTip (Optional[str]): 自定义界面的快捷操作提示，如果不传则使用默认提示。
+            singleMode (bool): 是否为单选模式（开启后新提取的区域会覆盖旧区域），默认为 False。
+            validator (Optional[Callable]): 自定义校验函数。
+                接收参数: targets (List[Tuple[str, str, Any]])
+                返回: True 表示校验通过；返回 str 表示校验失败并作为警告信息弹出。
+        """
         self._app = appComHandle
         self._logger = logger
         self._title = title
         self._singleMode = singleMode
+        self._validator = validator
 
         self._origMoveAfterReturn = True
         try:
@@ -223,18 +246,38 @@ class SelectionPickerUI:
 
     def _onConfirm(self):
         """确认提交"""
+        # 1. 确保有数据
         if not self._selectedTargets:
-            self._addCurrentSelection()
             if not self._selectedTargets:
                 messagebox.showwarning("提示", "请先在 Excel 中选择有效区域并提取！", parent=self._root)
                 return
 
-        self._IsConfirmed = True
+        # 2. 触发回调校验（如果传入了 validator）
+        if self._validator:
+            try:
+                # 将当前选中的所有目标传递给回调函数
+                result = self._validator(self._selectedTargets)
+                
+                # 如果返回 False，说明校验失败（validator 内部可能已经自己弹窗了），拦截关闭
+                if result is False:
+                    return
+                # 如果返回的是字符串，说明校验失败，直接用这个字符串弹出警告，拦截关闭
+                elif isinstance(result, str):
+                    messagebox.showwarning("校验失败", result, parent=self._root)
+                    return
+            except Exception as e:
+                if self._logger:
+                    self._logger.error(f"执行提交校验回调时发生异常: {e}")
+                messagebox.showerror("校验错误", f"执行校验时发生内部错误:\n{e}", parent=self._root)
+                return
+
+        # 3. 校验通过（或没有校验函数），正常确认并退出
+        self._isConfirmed = True
         self._closeWindow()
 
     def _onCancel(self):
         """取消操作"""
-        self._IsConfirmed = False
+        self._isConfirmed = False
         self._closeWindow()
 
     def _closeWindow(self):
@@ -245,8 +288,16 @@ class SelectionPickerUI:
         except Exception:
             pass
 
-    def show(self):
-        """显示面板"""
+    def show(self) -> Tuple[bool, List[Tuple[str, str, Any]]]:
+        """
+        显示面板并阻塞等待用户操作结束。
+        
+        Returns:
+            Tuple[bool, List[Tuple[str, str, Any]]]:
+                - 第一个元素 (bool): isConfirmed，标识用户是否点击了“确定提交”（True）还是“取消/关闭”（False）。
+                - 第二个元素 (List): targets，提取到的选区数据列表。
+                  列表元素结构为元组 (工作表名称, 单元格地址, Range的COM对象实例)。
+        """
         try:
             self._startListening()
             self._root.protocol("WM_DELETE_WINDOW", self._onCancel)
@@ -258,4 +309,4 @@ class SelectionPickerUI:
         finally:
             self._stopListening()
 
-        return self._IsConfirmed, self._selectedTargets
+        return self._isConfirmed, self._selectedTargets

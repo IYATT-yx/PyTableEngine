@@ -884,6 +884,7 @@ class MainWindow:
                             pluginInfo['description'] = (
                                 f'元信息({metaAuthor}_{metaName})与目录({folder})不符'
                             )
+                            self.appendLog(pluginInfo['description'], level='ERROR')
                         else:
                             pluginInfo['description'] = rawInfo.get(
                                 'description', '未提供描述信息'
@@ -895,6 +896,7 @@ class MainWindow:
                     pluginInfo['status'] = '加载失败'
                     pluginInfo['tag'] = 'LOAD_FAILED'
                     pluginInfo['description'] = f'静态解析失败: {e}'
+                    self.appendLog(pluginInfo['description'], level='ERROR')
 
             if pluginInfo['status'] == '已加载':
                 pluginKey = f"{pluginInfo['author']}_{pluginInfo['name']}".lower()

@@ -59,6 +59,7 @@ nuitka --standalone `
 $ltoOption `
 --no-deployment-flag=self-contained `
 --enable-plugin=tk-inter `
+--include-package=tkinter `
 --include-package=win32com `
 --include-package=win32comext `
 --include-package=win32api `

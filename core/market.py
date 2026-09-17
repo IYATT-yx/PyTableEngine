@@ -27,6 +27,17 @@ class Market:
         self.config = config
         self.lastError: Optional[str] = None
 
+    def formatSize(self, sizeBytes) -> str:
+        """自动将字节大小格式化为合适的单位"""
+        if sizeBytes < 1024:
+            return f"{sizeBytes} Bytes"
+        elif sizeBytes < 1024 * 1024:
+            return f"{sizeBytes / 1024:.2f} KB"
+        elif sizeBytes < 1024 * 1024 * 1024:
+            return f"{sizeBytes / (1024 * 1024):.2f} MB"
+        else:
+            return f"{sizeBytes / (1024 * 1024 * 1024):.2f} GB"
+
     def downloadRepositoryIndex(self, logCallback: Optional[Callable[[str, str], None]] = None) -> bool:
         '''
         仅负责从远程下载插件索引 JSON 并安全写入 cache 目录。
@@ -65,7 +76,7 @@ class Market:
                 status = getattr(resp, 'status', 200)
                 rawData = resp.read()
                 dataLen = len(rawData)
-                log(f'索引数据下载成功! 状态码: {status}, 耗时: {elapsed:.2f}s, 大小: {dataLen} 字节', level='INFO')
+                log(f'索引数据下载成功! 状态码: {status}, 耗时: {elapsed:.2f}s, 大小: {self.formatSize(dataLen)} ', level='INFO')
 
                 # 校验 JSON 格式正确性后再写入，防止下载了错误页面/损坏内容
                 indexData = json.loads(rawData.decode('utf-8'))
@@ -122,8 +133,7 @@ class Market:
 
             plugins = parsedData.get('plugins', {})
             pluginCount = len(plugins)
-            pluginIds = list(plugins.keys())
-            log(f'成功读取插件中心索引文件缓存，共包含 {pluginCount} 个插件: {pluginIds}', level='SUCCESS')
+            log(f'成功读取插件中心索引文件缓存，共包含 {pluginCount} 个插件', level='SUCCESS')
             return parsedData
 
         except json.JSONDecodeError as e:

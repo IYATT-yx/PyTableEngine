@@ -1,3 +1,11 @@
+<#
+file: build.ps1
+description: PyTableEngine 构建脚本。
+            PowerShell 7.x 验证可用。
+author: IYATT-yx
+copyright:  Copyright (c) 2026 IYATT-yx.
+            Licensed under the MIT License. See LICENSE file in the project root for full license information.
+#>
 [CmdletBinding()]
 param (
     [switch]$DebugBuild
@@ -14,7 +22,9 @@ if ($DebugBuild) {
     $ltoOption = "--lto=yes"
 }
 
-python -m venv venv
+if (-not (Test-Path "venv")) {
+    python -m venv venv;
+}
 .\venv\Scripts\Activate.ps1
 python.exe -m pip install --upgrade pip
 pip install nuitka==4.2.1
@@ -77,6 +87,7 @@ $ltoOption `
 --windows-icon-from-ico=.\icon.ico `
 --include-data-file=.\icon.ico=.\ `
 --include-data-files=.\extensions\README.md=extensions/ `
+--include-data-files=.\extensions\BuildPlugin.ps1=extensions/ `
 --include-data-files=.\pytableenginesdk\*=pytableenginesdk/ `
 --noinclude-data-files="*__pycache__*/*" `
 --output-dir=dist `

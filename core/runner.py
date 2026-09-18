@@ -96,10 +96,11 @@ def pluginRunnerTask(pluginDirPath: str, pluginFolderName: str, progId: str, log
                 f'未在 [{pluginDirPath}] 目录下找到入口文件 {pluginFolderName}.py 或 .pyd'
             )
 
-        spec = importlib.util.spec_from_file_location(f'ext_{pluginFolderName}', targetEntry)
+        moduleName = pluginFolderName
+        spec = importlib.util.spec_from_file_location(moduleName, targetEntry)
         assert spec is not None and spec.loader is not None, f"无法从 {targetEntry} 加载模块规范"
         pluginModule = importlib.util.module_from_spec(spec)
-        sys.modules[f'ext_{pluginFolderName}'] = pluginModule
+        sys.modules[moduleName] = pluginModule
         spec.loader.exec_module(pluginModule)
 
         # 执行插件入口 run 函数

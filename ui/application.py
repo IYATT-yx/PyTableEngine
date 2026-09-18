@@ -864,10 +864,10 @@ class MainWindow:
             pluginInfo['author'] = folderAuthor
             pluginInfo['name'] = folderName
 
-            if entryType == 'PY 源码':
+            if entryType in ('PY 源码', 'PYD 闭源'):
                 try:
                     spec = importlib.util.spec_from_file_location(
-                        f'info_{folder}', pyFile
+                        folder, pyFile
                     )
                     assert spec is not None and spec.loader is not None, f'无法为插件 [{folder}] 创建模块规范或加载器'
                     mod = importlib.util.module_from_spec(spec)

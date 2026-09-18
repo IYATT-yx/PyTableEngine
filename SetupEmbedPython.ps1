@@ -24,7 +24,7 @@ Write-Host " Python Embed 自动化部署与 Pip 环境配置" -ForegroundColor 
 Write-Host "==========================================" -ForegroundColor Cyan
 
 # --- 代理配置 ---
-$timeoutSeconds = 5  # 倒计时等待时间（秒）
+$timeoutSeconds = 10  # 倒计时等待时间（秒）
 
 Write-Host "[INFO] 网络代理配置提示：" -ForegroundColor Cyan
 
@@ -60,6 +60,11 @@ if ($keyPressed) {
     $proxyInput = ""
 }
 
+$iwrArgs = @{}
+if (-not [string]::IsNullOrWhitespace($proxyInput)) {
+    $iwrArgs["Proxy"] = $proxyInput.Trim()
+}
+
 # 清理并创建目标目录
 if (Test-Path $TargetDir) {
     Write-Host "[INFO] 清理旧的 runtime 目录..." -ForegroundColor Yellow
@@ -69,7 +74,7 @@ New-Item -ItemType Directory -Path $TargetDir | Out-Null
 
 # 下载 Python Embed Zip
 Write-Host "[INFO] 正在下载 Python Embed 压缩包..." -ForegroundColor Green
-Invoke-WebRequest -Uri $PythonUrl -OutFile $zipPath
+Invoke-WebRequest -Uri $PythonUrl -OutFile $zipPath @iwrArgs
 
 # 解压压缩包
 Write-Host "[INFO] 正在解压至 $TargetDir ..." -ForegroundColor Green
@@ -97,7 +102,7 @@ if ($pthFile) {
 
 # 下载并运行 get-pip.py 安装 pip
 Write-Host "[INFO] 正在下载 get-pip.py 引导脚本..." -ForegroundColor Green
-Invoke-WebRequest -Uri $GetPipUrl -OutFile $getPipPath
+Invoke-WebRequest -Uri $GetPipUrl -OutFile $getPipPath @iwrArgs
 
 Write-Host "[INFO] 正在使用 Embed Python 执行 pip 引导安装..." -ForegroundColor Green
 

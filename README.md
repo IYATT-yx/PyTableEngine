@@ -22,15 +22,17 @@ Last week, I outlined a plan to develop a tool: a central engine that provides n
 
 ## 测试环境 / Testing Environment
 
-* Python 3.14.5  （Windows 10 及以上可用）  
+* [Python 3.14.5](https://www.python.org/ftp/python/3.14.5/python-3.14.5-amd64.exe)  （Windows 10 及以上可用）  
 * Microsoft Office 专业增强版 2024  
-* Visual Studio Community 2026（Nuitka 打包时使用）
+* [Visual Studio Build Tools 2026](https://aka.ms/vs/stable/vs_BuildTools.exe) - 使用 C++ 的桌面开发（Nuitka 编译使用）
+* [PowerShell 7](https://github.com/PowerShell/PowerShell/releases)（执行打包脚本）
 
 ---
 
-* Python 3.14.5 (Available on Windows 10 and above)
+* [Python 3.14.5](https://www.python.org/ftp/python/3.14.5/python-3.14.5-amd64.exe)  (Available on Windows 10 and above)
 * Microsoft Office Professional Plus 2024
-* Visual Studio Community 2026 (Used during Nuitka packaging)
+* [Visual Studio Build Tools 2026](https://aka.ms/vs/stable/vs_BuildTools.exe) - Desktop development with C++ (Used for Nuitka compilation)
+* [PowerShell 7](https://github.com/PowerShell/PowerShell/releases) (Used to execute packaging scripts)
 
 ## 插件 / Plugins
 

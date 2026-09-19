@@ -111,33 +111,73 @@ foreach ($plugin in $targetPlugins) {
 
     $baseName = [System.IO.Path]::GetFileNameWithoutExtension($plugin.File);
     $targetPydName = "$baseName.pyd";
-    $finalPydPath = Join-Path $plugin.Dir $targetPydName;
 
+    # 创建目标输出子文件夹：<插件目录>/<插件名>/
+    $outDir = Join-Path $plugin.Dir $baseName;
+    if (-not (Test-Path $outDir)) {
+        New-Item -ItemType Directory -Path $outDir | Out-Null;
+    }
+
+    $finalPydPath = Join-Path $outDir $targetPydName;
+
+    # 执行 Nuitka 编译（直接输出至子目录）
     & $targetPython -m nuitka --module `
         $ltoOption `
         --nofollow-import-to=pytableenginesdk `
-        --output-dir="$($plugin.Dir)" `
+        --output-dir="$outDir" `
         "$($plugin.File)";
 
     if ($LASTEXITCODE -eq 0) {
-        Write-Host '[SUCCESS] 插件打包完成 -> 正在处理文件重命名...' -ForegroundColor Green;
+        Write-Host '[SUCCESS] 插件打包完成 -> 正在整理文件夹与生成 build.json...' -ForegroundColor Green;
 
-        # 查找 Nuitka 生成带 ABI 后缀的 .pyd 文件（如 xxx.cp314-win_amd64.pyd）
-        $rawPyd = Get-ChildItem -Path $plugin.Dir -Filter "$baseName*.pyd" | Where-Object { $_.Name -ne $targetPydName } | Select-Object -First 1;
+        # 查找带 ABI 后缀的 .pyd 文件并重命名为干净文件名
+        $rawPyd = Get-ChildItem -Path $outDir -Filter "$baseName*.pyd" | Where-Object { $_.Name -ne $targetPydName } | Select-Object -First 1;
 
         if ($rawPyd) {
-            # 如果存在旧的同名干净文件，先移除防止覆盖报错
             if (Test-Path $finalPydPath) {
                 Remove-Item -Path $finalPydPath -Force;
             }
-            # 重命名为标准的纯净文件名 <插件名>.pyd
             Rename-Item -Path $rawPyd.FullName -NewName $targetPydName -Force;
-
-            $buildCacheDir = Join-Path $plugin.Dir "$baseName.build";
-            if (Test-Path $buildCacheDir) {
-                Remove-Item -Path $buildCacheDir -Recurse -Force;
-            }
         }
+
+        # 清理 .build 编译缓存目录
+        $buildCacheDir = Join-Path $outDir "$baseName.build";
+        if (Test-Path $buildCacheDir) {
+            Remove-Item -Path $buildCacheDir -Recurse -Force;
+        }
+
+        # 提取 nuitka --version 输出内容
+        $nuitkaInfoText = & $targetPython -m nuitka --version 2>&1 | Out-String;
+
+        # 解析 Nuitka 版本
+        $nuitkaVer = "Unknown";
+        if ($nuitkaInfoText -match '(?m)^([\d\.]+)') {
+            $nuitkaVer = $Matches[1];
+        }
+
+        # 解析 C 编译器信息 (例如: cl (cl 14.5).)
+        $cCompiler = "Unknown";
+        if ($nuitkaInfoText -match 'Version C compiler:\s*(.+)') {
+            $cCompiler = $Matches[1].Trim();
+        }
+
+        # 获取 Python 版本与标准的 ABI 字符串 (裁剪多余的 . 和 .pyd)
+        $pyVersion = & $targetPython -c "import sys; print(sys.version.split()[0])";
+        $pyAbi = & $targetPython -c "import sysconfig, re; ext = sysconfig.get_config_var('EXT_SUFFIX') or ''; print(re.sub(r'^\.|\.pyd$', '', ext))";
+
+        # 构造 build.json 数据
+        $buildInfo = [ordered]@{
+            plugin_name     = $baseName;
+            build_timestamp = (Get-Date -Format "yyyy-MM-dd HH:mm:ss");
+            nuitka_version  = $nuitkaVer.Trim();
+            python_version  = $pyVersion.Trim();
+            python_abi      = $pyAbi.Trim();
+            compiler        = $cCompiler;
+            lto_enabled     = (-not $DebugBuild)
+        };
+
+        $jsonPath = Join-Path $outDir "build.json";
+        $buildInfo | ConvertTo-Json -Depth 3 | Set-Content -Path $jsonPath -Encoding UTF8;
 
         # 打开文件夹并高亮选中最终生成的 .pyd 文件
         if (Test-Path $finalPydPath) {
